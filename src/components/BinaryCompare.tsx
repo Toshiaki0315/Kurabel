@@ -1,11 +1,13 @@
 import { useState } from "react";
+import { ToolbarPortal } from "./ToolbarSlot";
 import type { BinaryRow, ByteCell } from "../types";
 
 const PAGE = 500;
 
-function Side({ cells }: { cells: ByteCell[] }) {
+function Side({ offset, cells, divider }: { offset: number; cells: ByteCell[]; divider?: boolean }) {
   return (
     <>
+      <td className={divider ? "ln divider" : "ln"}>{offset.toString(16).padStart(8, "0")}</td>
       <td className="hex">
         {cells.map((c, i) => (
           <span key={i} className={c.changed ? "byte chg" : "byte"}>
@@ -24,24 +26,20 @@ function Side({ cells }: { cells: ByteCell[] }) {
   );
 }
 
-export function BinaryCompare(props: { rows: BinaryRow[]; leftSize: number; rightSize: number }) {
+export function BinaryCompare(props: { rows: BinaryRow[] }) {
   const [shown, setShown] = useState(PAGE);
   const visible = props.rows.slice(0, shown);
   return (
     <section className="binary-compare">
-      <div className="bar">
+      <ToolbarPortal>
         <span>バイナリ比較（読み取り専用）</span>
-        <span className="summary">
-          左 {props.leftSize} バイト / 右 {props.rightSize} バイト
-        </span>
-      </div>
+      </ToolbarPortal>
       <table className="diff-table mono">
         <tbody>
           {visible.map((r) => (
             <tr key={r.offset}>
-              <td className="ln">{r.offset.toString(16).padStart(8, "0")}</td>
-              <Side cells={r.left} />
-              <Side cells={r.right} />
+              <Side offset={r.offset} cells={r.left} />
+              <Side offset={r.offset} cells={r.right} divider />
             </tr>
           ))}
         </tbody>

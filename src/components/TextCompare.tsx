@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { diffText } from "../api";
+import { diffText, saveText } from "../api";
 import type { DiffMode, DiffRow } from "../types";
+import { ToolbarPortal } from "./ToolbarSlot";
+import { NumberedTextarea } from "./NumberedTextarea";
 import { CellText } from "./Segments";
 
 interface Props {
@@ -8,11 +10,15 @@ interface Props {
   rightText: string;
   rows: DiffRow[];
   mode: DiffMode;
+  leftPath: string;
+  rightPath: string;
 }
 
 export function TextCompare(props: Props) {
   const [leftText, setLeftText] = useState(props.leftText);
   const [rightText, setRightText] = useState(props.rightText);
+  const [savedLeft, setSavedLeft] = useState(props.leftText);
+  const [savedRight, setSavedRight] = useState(props.rightText);
   const [rows, setRows] = useState(props.rows);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,6 +28,18 @@ export function TextCompare(props: Props) {
     try {
       setRows(await diffText(l, r, mode));
       setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const save = async (side: "left" | "right") => {
+    const [path, text] = side === "left" ? [props.leftPath, leftText] : [props.rightPath, rightText];
+    try {
+      await saveText(path, text);
+      (side === "left" ? setSavedLeft : setSavedRight)(text);
+      setError(null);
+      await rediff(leftText, rightText, props.mode);
     } catch (e) {
       setError(String(e));
     }
@@ -41,7 +59,7 @@ export function TextCompare(props: Props) {
 
   return (
     <section className="text-compare">
-      <div className="bar">
+      <ToolbarPortal>
         <button onClick={() => setEditing((v) => !v)}>{editing ? "表示に戻る" : "編集"}</button>
         <button
           onClick={() => {
@@ -53,11 +71,24 @@ export function TextCompare(props: Props) {
         </button>
         <span className="summary">差分 {diffCount} 行</span>
         {error && <span role="alert" className="error">{error}</span>}
+      </ToolbarPortal>
+      <div className="pane-actions">
+        {(["left", "right"] as const).map((side) => {
+          const dirty = side === "left" ? leftText !== savedLeft : rightText !== savedRight;
+          return (
+            <div key={side} className={`pane-action ${side}`}>
+              <button aria-label={`${side === "left" ? "左" : "右"}を保存`} disabled={!dirty} onClick={() => void save(side)}>
+                保存
+              </button>
+              {dirty && <span className="dirty">未保存の変更あり</span>}
+            </div>
+          );
+        })}
       </div>
       {editing ? (
         <div className="edit-panes">
-          <textarea aria-label="左のテキスト" value={leftText} onChange={(e) => setLeftText(e.target.value)} spellCheck={false} />
-          <textarea aria-label="右のテキスト" value={rightText} onChange={(e) => setRightText(e.target.value)} spellCheck={false} />
+          <NumberedTextarea label="左のテキスト" value={leftText} onChange={setLeftText} />
+          <NumberedTextarea label="右のテキスト" value={rightText} onChange={setRightText} />
         </div>
       ) : (
         <table className="diff-table">
@@ -68,7 +99,7 @@ export function TextCompare(props: Props) {
                 <td className="code left">
                   <CellText cell={row.left} />
                 </td>
-                <td className="ln">{row.right?.line_no}</td>
+                <td className="ln divider">{row.right?.line_no}</td>
                 <td className="code right">
                   <CellText cell={row.right} />
                 </td>

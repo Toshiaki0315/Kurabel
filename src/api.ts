@@ -10,6 +10,14 @@ export function diffText(left: string, right: string, mode: DiffMode): Promise<D
   return invoke<DiffRow[]>("diff_text", { left, right, mode });
 }
 
+export function saveText(path: string, content: string): Promise<void> {
+  return invoke("save_text", { path, content });
+}
+
+export function pathKind(path: string): Promise<"file" | "directory"> {
+  return invoke("path_kind", { path });
+}
+
 /** ダイアログでファイルまたはディレクトリを1つ選ぶ。キャンセル時は null。 */
 export async function pickPath(directory: boolean): Promise<string | null> {
   const selected = await open({ directory, multiple: false });

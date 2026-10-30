@@ -5,7 +5,7 @@ const open = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (...a: unknown[]) => open(...a) }));
 
-import { comparePaths, diffText, pickPath } from "./api";
+import { comparePaths, diffText, pathKind, pickPath, saveText } from "./api";
 
 describe("api", () => {
   it("invokes compare_paths", async () => {
@@ -18,6 +18,18 @@ describe("api", () => {
     invoke.mockResolvedValue([]);
     await diffText("a", "b", "word");
     expect(invoke).toHaveBeenCalledWith("diff_text", { left: "a", right: "b", mode: "word" });
+  });
+
+  it("invokes path_kind", async () => {
+    invoke.mockResolvedValue("file");
+    expect(await pathKind("/x")).toBe("file");
+    expect(invoke).toHaveBeenCalledWith("path_kind", { path: "/x" });
+  });
+
+  it("invokes save_text", async () => {
+    invoke.mockResolvedValue(undefined);
+    await saveText("/x", "body");
+    expect(invoke).toHaveBeenCalledWith("save_text", { path: "/x", content: "body" });
   });
 
   it("returns the selected path, or null when cancelled", async () => {

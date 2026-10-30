@@ -1,7 +1,12 @@
-.PHONY: dev app dmg test coverage
+.PHONY: dev web app dmg test coverage
 
-# 開発用サーバー起動
+# 開発起動 (Tauriアプリ。Viteはbeforeを経由して自動起動)
 dev:
+	mkdir -p dist
+	npm run tauri dev
+
+# フロントエンドのみ (ブラウザ確認用。Tauri APIは使えない)
+web:
 	npm run dev
 
 # アプリケーションのビルド

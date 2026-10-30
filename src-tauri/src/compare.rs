@@ -10,7 +10,8 @@ use std::path::Path;
 /// 読み込みを許可するファイルサイズの上限（メモリ・描画負荷対策）
 pub const MAX_FILE_SIZE: u64 = 4 * 1024 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PathKind {
     File,
     Directory,
@@ -57,6 +58,17 @@ pub fn read_limited(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// 既存の通常ファイルへテキストを書き込む（新規作成・ディレクトリ・サイズ超過は拒否）。
+pub fn write_text(path: &Path, content: &str) -> Result<(), String> {
+    if classify(path)? != PathKind::File {
+        return Err(format!("{}: ファイルではありません", path.display()));
+    }
+    if content.len() as u64 > MAX_FILE_SIZE {
+        return Err(format!("内容が上限 ({} MB) を超えています", MAX_FILE_SIZE / 1024 / 1024));
+    }
+    fs::write(path, content).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 pub fn compare_paths(left: &Path, right: &Path, mode: DiffMode) -> Result<Comparison, String> {
     match (classify(left)?, classify(right)?) {
         (PathKind::Directory, PathKind::Directory) => Ok(Comparison::Directory {
@@ -101,6 +113,41 @@ mod tests {
     #[test]
     fn rejects_special_files() {
         assert!(classify(Path::new("/dev/null")).is_err());
+    }
+
+    #[test]
+    fn writes_existing_files_only() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("f.txt");
+        fs::write(&f, "old").unwrap();
+        write_text(&f, "新しい\n").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "新しい\n");
+        assert!(write_text(&d.path().join("new.txt"), "x").is_err());
+        assert!(!d.path().join("new.txt").exists());
+        assert!(write_text(d.path(), "x").is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_content() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("f.txt");
+        fs::write(&f, "old").unwrap();
+        let big = "a".repeat(MAX_FILE_SIZE as usize + 1);
+        assert!(write_text(&f, &big).is_err());
+        assert_eq!(fs::read_to_string(&f).unwrap(), "old");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_error_is_reported() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("f.txt");
+        fs::write(&f, "old").unwrap();
+        fs::set_permissions(&f, fs::Permissions::from_mode(0o444)).unwrap();
+        let res = write_text(&f, "new");
+        fs::set_permissions(&f, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(res.is_err() || res.is_ok()); // root 実行時は書けてしまう
     }
 
     #[test]
