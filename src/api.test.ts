@@ -28,8 +28,9 @@ describe("api", () => {
 
   it("invokes save_text", async () => {
     invoke.mockResolvedValue(undefined);
-    await saveText("/x", "body");
-    expect(invoke).toHaveBeenCalledWith("save_text", { path: "/x", content: "body" });
+    const encoding = { name: "Shift_JIS", bom: false };
+    await saveText("/x", "body", encoding);
+    expect(invoke).toHaveBeenCalledWith("save_text", { path: "/x", content: "body", encoding });
   });
 
   it("returns the selected path, or null when cancelled", async () => {

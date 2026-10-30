@@ -8,7 +8,7 @@ import { TextCompare } from "./components/TextCompare";
 import { assignDropped, type Slots } from "./lib/drop";
 import { joinPath } from "./lib/path";
 import { useDragDrop } from "./lib/useDragDrop";
-import type { Comparison, DiffMode } from "./types";
+import type { Comparison, DiffMode, TextEncoding } from "./types";
 
 interface Child {
   rel: string;
@@ -17,9 +17,12 @@ interface Child {
   result: Comparison;
 }
 
-/** バイナリ比較時のみ、各ペインのヘッダーにファイルサイズを出す。 */
+const encodingLabel = (e: TextEncoding) => (e.bom ? `${e.name} (BOM)` : e.name);
+
+/** 各ペインのヘッダーに、テキストなら文字コード、バイナリならファイルサイズを出す。 */
 function sizeInfo(result: Comparison | null, child: Child | null, side: "left" | "right"): string | undefined {
   const shown = child?.result ?? result;
+  if (shown?.kind === "text") return encodingLabel(side === "left" ? shown.left_encoding : shown.right_encoding);
   if (shown?.kind !== "binary") return undefined;
   return `${side === "left" ? shown.left_size : shown.right_size} バイト`;
 }
@@ -28,7 +31,7 @@ function Result(props: { result: Comparison; mode: DiffMode; leftPath: string; r
   const { result } = props;
   switch (result.kind) {
     case "text":
-      return <TextCompare leftText={result.left_text} rightText={result.right_text} rows={result.rows} mode={props.mode} leftPath={props.leftPath} rightPath={props.rightPath} />;
+      return <TextCompare leftText={result.left_text} rightText={result.right_text} rows={result.rows} mode={props.mode} leftPath={props.leftPath} rightPath={props.rightPath} leftEncoding={result.left_encoding} rightEncoding={result.right_encoding} />;
     case "binary":
       return <BinaryCompare rows={result.rows} />;
     case "directory":
@@ -114,6 +117,7 @@ export default function App() {
       </header>
       <div className="pane-headers">
         <PathPicker side="left" value={left} info={sizeInfo(result ?? null, child, "left")} choosing={choosing === "left"} onPick={pick("left")} onChoose={choose("left")} />
+        <div className="mid" />
         <PathPicker side="right" value={right} info={sizeInfo(result ?? null, child, "right")} choosing={choosing === "right"} onPick={pick("right")} onChoose={choose("right")} />
       </div>
       {error && <div role="alert" className="error">{error}</div>}

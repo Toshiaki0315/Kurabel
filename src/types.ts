@@ -35,7 +35,19 @@ export interface DirEntry {
   status: DirStatus;
 }
 
+export interface TextEncoding {
+  name: string;
+  bom: boolean;
+}
+
 export type Comparison =
-  | { kind: "text"; left_text: string; right_text: string; rows: DiffRow[] }
+  | {
+      kind: "text";
+      left_text: string;
+      right_text: string;
+      left_encoding: TextEncoding;
+      right_encoding: TextEncoding;
+      rows: DiffRow[];
+    }
   | { kind: "binary"; left_size: number; right_size: number; rows: BinaryRow[] }
   | { kind: "directory"; entries: DirEntry[] };

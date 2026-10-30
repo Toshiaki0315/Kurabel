@@ -19,7 +19,14 @@ vi.mock("./lib/useDragDrop", () => ({
 
 import App from "./App";
 
-const textResult = { kind: "text", left_text: "a", right_text: "b", rows: [] };
+const textResult = {
+  kind: "text",
+  left_text: "a",
+  right_text: "b",
+  left_encoding: { name: "Shift_JIS", bom: false },
+  right_encoding: { name: "UTF-8", bom: true },
+  rows: [],
+};
 const dirResult = {
   kind: "directory",
   entries: [{ path: "f.txt", left: "file", right: "file", status: "modified" }],
@@ -54,6 +61,8 @@ describe("App", () => {
     await choose("右", "/r.txt");
     await waitFor(() => expect(comparePaths).toHaveBeenCalledWith("/l.txt", "/r.txt", "line"));
     expect(await screen.findByText("編集")).toBeInTheDocument();
+    expect(screen.getByText("Shift_JIS")).toBeInTheDocument();
+    expect(screen.getByText("UTF-8 (BOM)")).toBeInTheDocument();
   });
 
   it("ignores a cancelled dialog", async () => {

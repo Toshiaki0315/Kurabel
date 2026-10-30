@@ -1,13 +1,12 @@
-:root { color-scheme: light dark; font-family: system-ui, "Hiragino Sans", sans-serif; --add:#d1f5d8; --del:#ffd7d5; --mod:#fff3bf; --chg:#ffb454; }
+:root { --mid: 3.5em; color-scheme: light dark; font-family: system-ui, "Hiragino Sans", sans-serif; --add:#d1f5d8; --del:#ffd7d5; --mod:#fff3bf; --chg:#ffb454; }
 @media (prefers-color-scheme: dark) { :root { --add:#1e4620; --del:#5a1e1e; --mod:#5a4b10; --chg:#a15c00; } }
 body { margin: 0; font-size: 14px; }
 button, select, input { font: inherit; }
 .app { display: flex; flex-direction: column; height: 100vh; }
 .toolbar-slot { display: flex; gap: 12px; align-items: center; flex: 1; }
 .toolbar { display: flex; gap: 16px; padding: 6px 12px; border-bottom: 1px solid #8884; align-items: center; }
-.pane-headers { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #8884; }
+.pane-headers { display: grid; grid-template-columns: 1fr var(--mid) 1fr; border-bottom: 1px solid #8884; }
 .picker { padding: 6px 12px; min-width: 0; }
-.picker.right { border-left: 2px solid #8888; }
 .path-box { display: flex; gap: 10px; align-items: center; border: 1px solid #8886; border-radius: 6px; padding: 3px 4px 3px 10px; min-width: 0; }
 .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
 .choice { display: flex; gap: 6px; }
@@ -25,28 +24,30 @@ main { flex: 1; overflow: auto; }
 .row-replace .code { background: var(--mod); }
 .row-insert .left, .row-delete .right { background: #8881; }
 mark.chg, .chg { background: var(--chg); color: inherit; }
-.edit-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px; height: calc(100% - 50px); }
+.edit-panes { display: grid; grid-template-columns: 1fr var(--mid) 1fr; gap: 0; padding: 0; height: calc(100% - 50px); }
 .edit-panes textarea { font-family: ui-monospace, Menlo, monospace; font-size: 13px; min-height: 60vh; }
 .mono td { white-space: nowrap; word-break: normal; overflow: hidden; }
 .mono .ln { width: 9ch; text-align: left; }
+.mono td.mid { width: var(--mid); }
 .mono .ascii { width: 17ch; }
 .mono .hex .byte { margin-right: .4em; }
-.dir-row { display: grid; grid-template-columns: 1fr 1fr 5em; border-bottom: 1px solid #8882; }
+.dir-row { display: grid; grid-template-columns: 1fr var(--mid) 1fr; border-bottom: 1px solid #8882; }
 .dir-cell { padding: 2px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dir-status { padding: 2px 8px; opacity: .8; }
+.dir-status { padding: 2px 0; text-align: center; opacity: .8; }
 .st-added { background: var(--add); }
 .st-removed { background: var(--del); }
 .st-modified { background: var(--mod); }
 button.link { background: none; border: 0; padding: 0; color: LinkText; cursor: pointer; font: inherit; }
-.divider { border-left: 2px solid #8888; }
+.mid { border-left: 2px solid #8888; border-right: 2px solid #8888; }
+.diff-table .merge { width: var(--mid); text-align: center; vertical-align: top; padding: 0; }
+.merge button { padding: 0 6px; margin: 1px; line-height: 1.2; }
+.row-current .code { outline: 2px solid #38f8; outline-offset: -2px; }
 .numbered { display: flex; min-width: 0; border: 1px solid #8886; }
 .numbered .gutter { overflow: hidden; padding: 2px 6px; text-align: right; opacity: .55; user-select: none; font: 13px/1.4 ui-monospace, Menlo, monospace; border-right: 1px solid #8884; }
 .numbered textarea { flex: 1; min-width: 0; border: 0; resize: none; line-height: 1.4; padding: 2px 6px; white-space: pre; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 .edit-panes { gap: 0; }
-.edit-panes .numbered + .numbered { border-left: 2px solid #8888; }
-.pane-actions { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #8884; }
+.pane-actions { display: grid; grid-template-columns: 1fr var(--mid) 1fr; border-bottom: 1px solid #8884; }
 .pane-action { display: flex; gap: 8px; align-items: center; padding: 4px 12px; }
-.pane-action.right { border-left: 2px solid #8888; }
 .dirty { color: #c60; font-size: 12px; }
 .numbered { --lh: 18px; }
 .editor { position: relative; flex: 1; min-width: 0; }
@@ -57,4 +58,4 @@ button.link { background: none; border: 0; padding: 0; color: LinkText; cursor: 
 .hl-replace { background: var(--mod); }
 .editor textarea { position: relative; width: 100%; height: 100%; box-sizing: border-box; background: transparent; line-height: var(--lh); }
 .numbered .gutter { line-height: var(--lh); }
-.edit-panes[hidden] { display: none; }
+.edit-panes.offscreen { position: absolute; left: -10000px; top: 0; width: 1000px; height: 300px; }

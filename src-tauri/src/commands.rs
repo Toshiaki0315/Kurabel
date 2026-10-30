@@ -1,6 +1,7 @@
 //! Tauri コマンド。ロジックは各モジュールに置き、ここは薄いラッパーに留める。
 
 use crate::compare::{self, Comparison, PathKind};
+use crate::textcodec::TextEncoding;
 use crate::textdiff::{self, DiffMode, DiffRow};
 
 #[tauri::command]
@@ -14,8 +15,8 @@ pub fn path_kind(path: String) -> Result<PathKind, String> {
 }
 
 #[tauri::command]
-pub fn save_text(path: String, content: String) -> Result<(), String> {
-    compare::write_text(path.as_ref(), &content)
+pub fn save_text(path: String, content: String, encoding: TextEncoding) -> Result<(), String> {
+    compare::write_text(path.as_ref(), &content, &encoding)
 }
 
 #[tauri::command]
@@ -35,7 +36,8 @@ mod tests {
 
     #[test]
     fn save_text_rejects_missing_file() {
-        assert!(save_text("/nonexistent/x".into(), "a".into()).is_err());
+        let enc = TextEncoding { name: "UTF-8".into(), bom: false };
+        assert!(save_text("/nonexistent/x".into(), "a".into(), enc).is_err());
     }
 
     #[test]

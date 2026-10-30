@@ -4,10 +4,10 @@ import type { BinaryRow, ByteCell } from "../types";
 
 const PAGE = 500;
 
-function Side({ offset, cells, divider }: { offset: number; cells: ByteCell[]; divider?: boolean }) {
+function Side({ offset, cells }: { offset: number; cells: ByteCell[] }) {
   return (
     <>
-      <td className={divider ? "ln divider" : "ln"}>{offset.toString(16).padStart(8, "0")}</td>
+      <td className="ln">{offset.toString(16).padStart(8, "0")}</td>
       <td className="hex">
         {cells.map((c, i) => (
           <span key={i} className={c.changed ? "byte chg" : "byte"}>
@@ -39,7 +39,8 @@ export function BinaryCompare(props: { rows: BinaryRow[] }) {
           {visible.map((r) => (
             <tr key={r.offset}>
               <Side offset={r.offset} cells={r.left} />
-              <Side offset={r.offset} cells={r.right} divider />
+              <td className="mid" />
+              <Side offset={r.offset} cells={r.right} />
             </tr>
           ))}
         </tbody>

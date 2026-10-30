@@ -18,10 +18,10 @@ function Node(props: { node: TreeNode; depth: number; onlyDiff: boolean; onOpen:
         <div className="dir-cell" style={pad}>
           {node.left && (openable ? <button className="link" onClick={() => onOpen(node.path)}>{name}</button> : name)}
         </div>
-        <div className="dir-cell divider" style={pad}>
+        <div className="dir-status mid">{dir && node.status === "same" ? "" : LABEL[node.status]}</div>
+        <div className="dir-cell" style={pad}>
           {node.right && (openable ? <button className="link" onClick={() => onOpen(node.path)}>{name}</button> : name)}
         </div>
-        <div className="dir-status">{dir && node.status === "same" ? "" : LABEL[node.status]}</div>
       </div>
       {node.children.map((c) => (
         <Node key={c.path} node={c} depth={depth + 1} onlyDiff={onlyDiff} onOpen={onOpen} />

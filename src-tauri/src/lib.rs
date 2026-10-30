@@ -2,6 +2,7 @@ pub mod binary;
 pub mod commands;
 pub mod compare;
 pub mod dirdiff;
+pub mod textcodec;
 pub mod textdiff;
 
 use tauri::menu::{MenuBuilder, SubmenuBuilder};

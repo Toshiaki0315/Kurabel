@@ -18,11 +18,6 @@ pub struct BinaryRow {
     pub right: Vec<ByteCell>,
 }
 
-/// NUL バイトを含む、または UTF-8 として不正ならバイナリとみなす。
-pub fn is_binary(data: &[u8]) -> bool {
-    data.contains(&0) || std::str::from_utf8(data).is_err()
-}
-
 fn cell(byte: u8, other: Option<&u8>) -> ByteCell {
     let ascii = if (0x20..0x7f).contains(&byte) { byte as char } else { '.' };
     ByteCell {
@@ -56,14 +51,6 @@ pub fn dump_diff(left: &[u8], right: &[u8]) -> Vec<BinaryRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detects_binary() {
-        assert!(is_binary(&[1, 0, 2]));
-        assert!(is_binary(&[0xff, 0xfe]));
-        assert!(!is_binary("こんにちは\n".as_bytes()));
-        assert!(!is_binary(b""));
-    }
 
     #[test]
     fn identical_data_has_no_changes() {
