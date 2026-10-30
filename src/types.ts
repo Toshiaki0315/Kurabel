@@ -1,4 +1,11 @@
 export type DiffMode = "line" | "word";
+
+export interface DiffOptions {
+  ignore_whitespace: boolean;
+  ignore_case: boolean;
+}
+
+export const DEFAULT_OPTIONS: DiffOptions = { ignore_whitespace: false, ignore_case: false };
 export type RowKind = "equal" | "insert" | "delete" | "replace";
 
 export interface Segment {
@@ -47,6 +54,8 @@ export type Comparison =
       right_text: string;
       left_encoding: TextEncoding;
       right_encoding: TextEncoding;
+      left_eol: string;
+      right_eol: string;
       rows: DiffRow[];
     }
   | { kind: "binary"; left_size: number; right_size: number; rows: BinaryRow[] }

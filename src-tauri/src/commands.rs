@@ -2,11 +2,21 @@
 
 use crate::compare::{self, Comparison, PathKind};
 use crate::textcodec::TextEncoding;
-use crate::textdiff::{self, DiffMode, DiffRow};
+use crate::textdiff::{self, DiffMode, DiffOptions, DiffRow};
 
 #[tauri::command]
-pub fn compare_paths(left: String, right: String, mode: DiffMode) -> Result<Comparison, String> {
-    compare::compare_paths(left.as_ref(), right.as_ref(), mode)
+pub fn compare_paths(
+    left: Option<String>,
+    right: Option<String>,
+    mode: DiffMode,
+    options: DiffOptions,
+) -> Result<Comparison, String> {
+    match (left, right) {
+        (Some(l), Some(r)) => compare::compare_paths(l.as_ref(), r.as_ref(), mode, &options),
+        (Some(l), None) => compare::view_single(l.as_ref(), true),
+        (None, Some(r)) => compare::view_single(r.as_ref(), false),
+        (None, None) => Err("ファイルまたはフォルダが指定されていません".to_string()),
+    }
 }
 
 #[tauri::command]
@@ -20,8 +30,8 @@ pub fn save_text(path: String, content: String, encoding: TextEncoding) -> Resul
 }
 
 #[tauri::command]
-pub fn diff_text(left: String, right: String, mode: DiffMode) -> Vec<DiffRow> {
-    textdiff::diff_text(&left, &right, mode)
+pub fn diff_text(left: String, right: String, mode: DiffMode, options: DiffOptions) -> Vec<DiffRow> {
+    textdiff::diff_text(&left, &right, mode, &options)
 }
 
 #[cfg(test)]
@@ -30,7 +40,7 @@ mod tests {
 
     #[test]
     fn diff_text_wraps_core() {
-        let rows = diff_text("a".into(), "b".into(), DiffMode::Line);
+        let rows = diff_text("a".into(), "b".into(), DiffMode::Line, DiffOptions::default());
         assert_eq!(rows.len(), 1);
     }
 
@@ -47,7 +57,17 @@ mod tests {
     }
 
     #[test]
+    fn compare_paths_handles_a_single_side() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_string_lossy().into_owned();
+        let one = |l: Option<String>, r: Option<String>| compare_paths(l, r, DiffMode::Line, DiffOptions::default());
+        assert!(matches!(one(Some(dir.clone()), None), Ok(Comparison::Directory { .. })));
+        assert!(matches!(one(None, Some(dir)), Ok(Comparison::Directory { .. })));
+        assert!(one(None, None).is_err());
+    }
+
+    #[test]
     fn compare_paths_reports_missing() {
-        assert!(compare_paths("/nonexistent/x".into(), "/nonexistent/y".into(), DiffMode::Line).is_err());
+        assert!(compare_paths(Some("/nonexistent/x".into()), Some("/nonexistent/y".into()), DiffMode::Line, DiffOptions::default()).is_err());
     }
 }

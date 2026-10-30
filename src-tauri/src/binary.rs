@@ -27,6 +27,18 @@ fn cell(byte: u8, other: Option<&u8>) -> ByteCell {
     }
 }
 
+/// 片方だけ開いているとき用の16進ダンプ（ハイライトなし、反対側は空）。
+pub fn dump_single(data: &[u8], left_side: bool) -> Vec<BinaryRow> {
+    data.chunks(BYTES_PER_ROW)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let cells: Vec<ByteCell> = chunk.iter().map(|b| cell(*b, Some(b))).collect();
+            let (left, right) = if left_side { (cells, vec![]) } else { (vec![], cells) };
+            BinaryRow { offset: (i * BYTES_PER_ROW) as u64, left, right }
+        })
+        .collect()
+}
+
 pub fn dump_diff(left: &[u8], right: &[u8]) -> Vec<BinaryRow> {
     let total = left.len().max(right.len());
     let mut rows = Vec::new();
@@ -84,5 +96,15 @@ mod tests {
     #[test]
     fn empty_inputs_yield_no_rows() {
         assert!(dump_diff(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn dump_single_has_no_highlights_and_one_empty_side() {
+        let rows = dump_single(&[0x41; 17], true);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.right.is_empty() && r.left.iter().all(|c| !c.changed)));
+        let rows = dump_single(b"AB", false);
+        assert!(rows[0].left.is_empty() && rows[0].right.len() == 2);
+        assert!(dump_single(&[], true).is_empty());
     }
 }

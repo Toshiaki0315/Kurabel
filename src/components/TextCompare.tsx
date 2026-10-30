@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { diffText, saveText } from "../api";
 import { applyBlock, blockLines, correspondingLine, findBlocks, type Side } from "../lib/merge";
-import type { DiffMode, DiffRow, TextEncoding } from "../types";
+import type { DiffMode, DiffOptions, DiffRow, TextEncoding } from "../types";
 import { CellText } from "./Segments";
 import { ToolbarPortal } from "./ToolbarSlot";
 import { NumberedTextarea, type EditorHandle, type LineHighlight } from "./NumberedTextarea";
@@ -22,8 +22,12 @@ interface Props {
   rightText: string;
   rows: DiffRow[];
   mode: DiffMode;
-  leftPath: string;
-  rightPath: string;
+  options: DiffOptions;
+  /** いずれかのペインに未保存の変更があるかどうかの通知（アンマウント時は false） */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** どちらかが null = 1つだけ開いている。比較せず、閲覧専用で表示する（編集・保存・差分操作なし） */
+  leftPath: string | null;
+  rightPath: string | null;
   leftEncoding: TextEncoding;
   rightEncoding: TextEncoding;
 }
@@ -37,7 +41,7 @@ export function TextCompare(props: Props) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState(-1);
-  const first = useRef(true);
+  const applied = useRef({ mode: props.mode, options: props.options });
   const diffed = useRef({ left: props.leftText, right: props.rightText });
   const seq = useRef(0);
   const root = useRef<HTMLElement>(null);
@@ -47,10 +51,11 @@ export function TextCompare(props: Props) {
   const blockAt = useMemo(() => new Map(blocks.map((b, i) => [b.start, i])), [blocks]);
 
   const rediff = async (l: string, r: string, mode: DiffMode) => {
+    if (props.leftPath === null || props.rightPath === null) return; // 1つだけのときは比較しない
     const id = ++seq.current;
     diffed.current = { left: l, right: r };
     try {
-      const next = await diffText(l, r, mode);
+      const next = await diffText(l, r, mode, props.options);
       if (id !== seq.current) return; // より新しい比較が走っている
       setRows(next);
       setError(null);
@@ -62,6 +67,7 @@ export function TextCompare(props: Props) {
   const save = async (side: Side) => {
     const [path, text, encoding] =
       side === "left" ? [props.leftPath, leftText, props.leftEncoding] : [props.rightPath, rightText, props.rightEncoding];
+    if (path === null) return;
     try {
       await saveText(path, text, encoding);
       (side === "left" ? setSavedLeft : setSavedRight)(text);
@@ -106,14 +112,14 @@ export function TextCompare(props: Props) {
   });
 
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
+    // 開発時の StrictMode では効果が二重に走るので、実際に値が変わったときだけ再比較する
+    const prev = applied.current;
+    if (prev.mode === props.mode && prev.options === props.options) return;
+    applied.current = { mode: props.mode, options: props.options };
     void rediff(leftText, rightText, props.mode);
-    // 表示モード切替時のみ再計算する
+    // 表示モード・比較オプションの切替時のみ再計算する
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.mode]);
+  }, [props.mode, props.options]);
 
   // 入力が止まってから自動で再比較し、ハイライトを追従させる
   useEffect(() => {
@@ -134,36 +140,54 @@ export function TextCompare(props: Props) {
     editors[to].current?.scrollToLine(correspondingLine(rows, side, line));
   };
 
+  const anyDirty = isDirty("left") || isDirty("right");
+  useEffect(() => {
+    props.onDirtyChange?.(anyDirty);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anyDirty]);
+  useEffect(
+    () => () => props.onDirtyChange?.(false),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const single = props.leftPath === null || props.rightPath === null;
   const diffCount = rows.filter((r) => r.kind !== "equal").length;
   const inCurrent = (i: number) => cursor >= 0 && blocks[cursor] && i >= blocks[cursor].start && i < blocks[cursor].end;
 
   return (
     <section className="text-compare" ref={root}>
       <ToolbarPortal>
-        <button onClick={() => setEditing((v) => !v)}>{editing ? "表示に戻る" : "編集"}</button>
-        <button aria-label="前の差分" title="前の差分 (Shift+F7)" disabled={blocks.length === 0} onClick={() => step(-1)}>
-          ▲
-        </button>
-        <button aria-label="次の差分" title="次の差分 (F7)" disabled={blocks.length === 0} onClick={() => step(1)}>
-          ▼
-        </button>
-        <span className="summary">
-          差分 {diffCount} 行{blocks.length > 0 && cursor >= 0 ? `（${cursor + 1} / ${blocks.length} 箇所）` : ""}
-        </span>
+        {!single && (
+          <>
+            <button onClick={() => setEditing((v) => !v)}>{editing ? "表示に戻る" : "編集"}</button>
+            <button aria-label="前の差分" title="前の差分 (Shift+F7)" disabled={blocks.length === 0} onClick={() => step(-1)}>
+              ▲
+            </button>
+            <button aria-label="次の差分" title="次の差分 (F7)" disabled={blocks.length === 0} onClick={() => step(1)}>
+              ▼
+            </button>
+            <span className="summary">
+              差分 {diffCount} 行{blocks.length > 0 && cursor >= 0 ? `（${cursor + 1} / ${blocks.length} 箇所）` : ""}
+            </span>
+          </>
+        )}
         {error && <span role="alert" className="error">{error}</span>}
       </ToolbarPortal>
+      {!single && (
       <div className="pane-actions">
         {(["left", "right"] as const).map((side) => (
           <PaneAction key={side} side={side} dirty={isDirty(side)} onSave={() => void save(side)} />
         ))}
       </div>
+      )}
       {/* 編集→表示→編集でも元に戻す履歴を保つため、テキストエリアは常に保持し表示だけ切り替える */}
-      <div className={editing ? "edit-panes" : "edit-panes offscreen"} aria-hidden={!editing}>
+      <div className={editing && !single ? "edit-panes" : "edit-panes offscreen"} aria-hidden={!editing || single}>
         <NumberedTextarea ref={editors.left} label="左のテキスト" value={leftText} onChange={setLeftText} onSave={saveShortcut("left")} onScrollLine={syncFrom("left")} highlights={highlightsFor(rows, "left")} />
         <div className="mid" />
         <NumberedTextarea ref={editors.right} label="右のテキスト" value={rightText} onChange={setRightText} onSave={saveShortcut("right")} onScrollLine={syncFrom("right")} highlights={highlightsFor(rows, "right")} />
       </div>
-      {!editing && (
+      {(!editing || single) && (
         <table className="diff-table">
           <tbody>
             {rows.map((row, i) => {

@@ -13,6 +13,8 @@ const entries: DirEntry[] = [
   { path: "other", left: "directory", right: "directory", status: "same" },
 ];
 
+const has = (name: string) => screen.queryByRole("treeitem", { name }) !== null;
+
 describe("DirCompare", () => {
   it("shows statuses with highlight classes", () => {
     render(<DirCompare entries={entries} onOpen={vi.fn()} />);
@@ -33,12 +35,64 @@ describe("DirCompare", () => {
     expect(screen.queryByRole("button", { name: "kind" })).toBeNull();
   });
 
-  it("filters to differences only", () => {
+  it("filters by status, keeping the folders that contain matches", () => {
     render(<DirCompare entries={entries} onOpen={vi.fn()} />);
-    expect(screen.getByRole("treeitem", { name: "sub/same.txt" })).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("差分のみ表示"));
-    expect(screen.queryByRole("treeitem", { name: "sub/same.txt" })).toBeNull();
-    expect(screen.queryByRole("treeitem", { name: "other" })).toBeNull();
-    expect(screen.getByRole("treeitem", { name: "sub" })).toBeInTheDocument();
+    const select = screen.getByLabelText("表示する差分");
+    fireEvent.change(select, { target: { value: "diff" } });
+    expect(has("sub/same.txt")).toBe(false);
+    expect(has("other")).toBe(false);
+    expect(has("sub")).toBe(true);
+    fireEvent.change(select, { target: { value: "added" } });
+    expect([has("new.txt"), has("gone.txt"), has("sub")]).toEqual([true, false, false]);
+    fireEvent.change(select, { target: { value: "removed" } });
+    expect([has("gone.txt"), has("new.txt")]).toEqual([true, false]);
+    fireEvent.change(select, { target: { value: "modified" } });
+    expect([has("sub/m.txt"), has("kind"), has("new.txt")]).toEqual([true, true, false]);
+  });
+
+  it("filters by name", () => {
+    render(<DirCompare entries={entries} onOpen={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("名前で絞り込み"), { target: { value: "SAME" } });
+    expect(has("sub/same.txt")).toBe(true);
+    expect(has("sub")).toBe(true);
+    expect(has("gone.txt")).toBe(false);
+  });
+
+  it("collapses and expands folders", () => {
+    render(<DirCompare entries={entries} onOpen={vi.fn()} />);
+    expect(screen.getByRole("treeitem", { name: "sub" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "subを閉じる" }));
+    expect(has("sub/m.txt")).toBe(false);
+    expect(screen.getByRole("treeitem", { name: "sub" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "subを開く" }));
+    expect(has("sub/m.txt")).toBe(true);
+    // 子を持たないフォルダには開閉ボタンがない
+    expect(screen.queryByRole("button", { name: /otherを/ })).toBeNull();
+  });
+
+  it("collapse-all / expand-all buttons, and search reveals collapsed matches", () => {
+    render(<DirCompare entries={entries} onOpen={vi.fn()} />);
+    fireEvent.click(screen.getByText("すべて閉じる"));
+    expect(has("sub/m.txt")).toBe(false);
+    fireEvent.change(screen.getByLabelText("名前で絞り込み"), { target: { value: "m.txt" } });
+    expect(has("sub/m.txt")).toBe(true);
+    fireEvent.change(screen.getByLabelText("名前で絞り込み"), { target: { value: "" } });
+    expect(has("sub/m.txt")).toBe(false);
+    fireEvent.click(screen.getByText("すべて開く"));
+    expect(has("sub/m.txt")).toBe(true);
+  });
+
+  it("shows a single-sided listing without status labels or open links", () => {
+    const single: DirEntry[] = [
+      { path: "a", left: "directory", right: null, status: "same" },
+      { path: "a/b.txt", left: "file", right: null, status: "same" },
+    ];
+    const onOpen = vi.fn();
+    render(<DirCompare entries={single} onOpen={onOpen} single />);
+    expect(screen.queryByText("同一")).toBeNull();
+    expect(screen.queryByText(/件の差分/)).toBeNull();
+    expect(screen.getByText("b.txt")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "b.txt" })).toBeNull();
+    expect(onOpen).not.toHaveBeenCalled();
   });
 });

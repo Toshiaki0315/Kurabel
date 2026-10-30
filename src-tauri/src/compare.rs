@@ -3,7 +3,7 @@
 use crate::binary::{self, BinaryRow};
 use crate::textcodec::{self, TextEncoding};
 use crate::dirdiff::{self, DirEntry};
-use crate::textdiff::{self, DiffMode, DiffRow};
+use crate::textdiff::{self, DiffMode, DiffOptions, DiffRow};
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -26,6 +26,9 @@ pub enum Comparison {
         right_text: String,
         left_encoding: TextEncoding,
         right_encoding: TextEncoding,
+        /// 改行コード: "LF" / "CRLF" / "CR" / "混在" / "なし"
+        left_eol: String,
+        right_eol: String,
         rows: Vec<DiffRow>,
     },
     Binary {
@@ -36,6 +39,21 @@ pub enum Comparison {
     Directory {
         entries: Vec<DirEntry>,
     },
+}
+
+/// 改行コードの種類を返す。
+pub fn detect_eol(text: &str) -> String {
+    let crlf = text.matches("\r\n").count();
+    let lf = text.matches('\n').count() - crlf;
+    let cr = text.matches('\r').count() - crlf;
+    match (crlf > 0, lf > 0, cr > 0) {
+        (false, false, false) => "なし",
+        (true, false, false) => "CRLF",
+        (false, true, false) => "LF",
+        (false, false, true) => "CR",
+        _ => "混在",
+    }
+    .to_string()
 }
 
 pub fn classify(path: &Path) -> Result<PathKind, String> {
@@ -73,25 +91,57 @@ pub fn write_text(path: &Path, content: &str, encoding: &TextEncoding) -> Result
     fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-pub fn compare_paths(left: &Path, right: &Path, mode: DiffMode) -> Result<Comparison, String> {
+/// 片方だけ開いているとき: そのファイル/フォルダをそのまま表示するための結果を返す（反対側は空）。
+pub fn view_single(path: &Path, left_side: bool) -> Result<Comparison, String> {
+    if classify(path)? == PathKind::Directory {
+        return Ok(Comparison::Directory { entries: dirdiff::list_dir(path, left_side)? });
+    }
+    let data = read_limited(path)?;
+    let Some(decoded) = textcodec::decode(&data) else {
+        let (size, other) = (data.len() as u64, 0);
+        return Ok(Comparison::Binary {
+            left_size: if left_side { size } else { other },
+            right_size: if left_side { other } else { size },
+            rows: binary::dump_single(&data, left_side),
+        });
+    };
+    let rows = textdiff::plain_rows(&decoded.text, left_side);
+    let mine = (decoded.text.clone(), decoded.encoding, detect_eol(&decoded.text));
+    let blank = (String::new(), TextEncoding { name: "UTF-8".into(), bom: false }, "なし".to_string());
+    let (l, r) = if left_side { (mine, blank) } else { (blank, mine) };
+    Ok(Comparison::Text {
+        left_text: l.0,
+        right_text: r.0,
+        left_encoding: l.1,
+        right_encoding: r.1,
+        left_eol: l.2,
+        right_eol: r.2,
+        rows,
+    })
+}
+
+pub fn compare_paths(left: &Path, right: &Path, mode: DiffMode, options: &DiffOptions) -> Result<Comparison, String> {
     match (classify(left)?, classify(right)?) {
         (PathKind::Directory, PathKind::Directory) => Ok(Comparison::Directory {
             entries: dirdiff::compare_dirs(left, right)?,
         }),
-        (PathKind::File, PathKind::File) => compare_files(left, right, mode),
+        (PathKind::File, PathKind::File) => compare_files(left, right, mode, options),
         _ => Err("ファイルとディレクトリは比較できません".to_string()),
     }
 }
 
-fn compare_files(left: &Path, right: &Path, mode: DiffMode) -> Result<Comparison, String> {
+fn compare_files(left: &Path, right: &Path, mode: DiffMode, options: &DiffOptions) -> Result<Comparison, String> {
     let (l, r) = (read_limited(left)?, read_limited(right)?);
     if let (Some(ld), Some(rd)) = (textcodec::decode(&l), textcodec::decode(&r)) {
-        let rows = textdiff::diff_text(&ld.text, &rd.text, mode);
+        let rows = textdiff::diff_text(&ld.text, &rd.text, mode, options);
+        let (left_eol, right_eol) = (detect_eol(&ld.text), detect_eol(&rd.text));
         return Ok(Comparison::Text {
             left_text: ld.text,
             right_text: rd.text,
             left_encoding: ld.encoding,
             right_encoding: rd.encoding,
+            left_eol,
+            right_eol,
             rows,
         });
     }
@@ -108,6 +158,72 @@ mod tests {
 
     fn utf8() -> TextEncoding {
         TextEncoding { name: "UTF-8".into(), bom: false }
+    }
+
+    #[test]
+    fn views_a_single_text_file() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("a.txt");
+        fs::write(&f, "one\r\ntwo\r\n").unwrap();
+        match view_single(&f, false).unwrap() {
+            Comparison::Text { left_text, right_text, left_eol, right_eol, rows, .. } => {
+                assert_eq!((left_text.as_str(), right_text.as_str()), ("", "one\r\ntwo\r\n"));
+                assert_eq!((left_eol.as_str(), right_eol.as_str()), ("なし", "CRLF"));
+                assert_eq!(rows.len(), 2);
+                assert!(rows.iter().all(|r| r.left.is_none() && r.right.is_some()));
+            }
+            _ => panic!("expected text"),
+        }
+        assert!(matches!(view_single(&f, true).unwrap(), Comparison::Text { .. }));
+    }
+
+    #[test]
+    fn views_a_single_binary_file_and_directory() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("a.bin");
+        fs::write(&f, [0u8, 1, 2]).unwrap();
+        match view_single(&f, true).unwrap() {
+            Comparison::Binary { left_size, right_size, rows } => {
+                assert_eq!((left_size, right_size), (3, 0));
+                assert!(rows[0].right.is_empty());
+            }
+            _ => panic!("expected binary"),
+        }
+        match view_single(&f, false).unwrap() {
+            Comparison::Binary { left_size, right_size, .. } => assert_eq!((left_size, right_size), (0, 3)),
+            _ => panic!("expected binary"),
+        }
+        match view_single(d.path(), true).unwrap() {
+            Comparison::Directory { entries } => assert_eq!(entries.len(), 1),
+            _ => panic!("expected directory"),
+        }
+        assert!(view_single(&d.path().join("none"), true).is_err());
+    }
+
+    #[test]
+    fn detects_eol() {
+        assert_eq!(detect_eol(""), "なし");
+        assert_eq!(detect_eol("a"), "なし");
+        assert_eq!(detect_eol("a\nb\n"), "LF");
+        assert_eq!(detect_eol("a\r\nb\r\n"), "CRLF");
+        assert_eq!(detect_eol("a\rb\r"), "CR");
+        assert_eq!(detect_eol("a\r\nb\n"), "混在");
+    }
+
+    #[test]
+    fn reports_eol_and_honors_options() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (d.path().join("a.txt"), d.path().join("b.txt"));
+        fs::write(&a, "Hello  World\r\n").unwrap();
+        fs::write(&b, "hello world\n").unwrap();
+        let opts = DiffOptions { ignore_whitespace: true, ignore_case: true };
+        match compare_paths(&a, &b, DiffMode::Line, &opts).unwrap() {
+            Comparison::Text { left_eol, right_eol, rows, .. } => {
+                assert_eq!((left_eol.as_str(), right_eol.as_str()), ("CRLF", "LF"));
+                assert!(rows.iter().all(|r| r.kind == crate::textdiff::RowKind::Equal));
+            }
+            _ => panic!("expected text"),
+        }
     }
 
     #[test]
@@ -167,7 +283,7 @@ mod tests {
         let (a, b) = (d.path().join("a.txt"), d.path().join("b.txt"));
         fs::write(&a, "one\ntwo\n").unwrap();
         fs::write(&b, "one\n2\n").unwrap();
-        match compare_paths(&a, &b, DiffMode::Line).unwrap() {
+        match compare_paths(&a, &b, DiffMode::Line, &DiffOptions::default()).unwrap() {
             Comparison::Text { left_text, right_text, rows, .. } => {
                 assert_eq!(left_text, "one\ntwo\n");
                 assert_eq!(right_text, "one\n2\n");
@@ -185,7 +301,7 @@ mod tests {
         let (sjis, _, _) = encoding_rs::SHIFT_JIS.encode(text);
         fs::write(&a, &sjis).unwrap();
         fs::write(&b, text).unwrap();
-        match compare_paths(&a, &b, DiffMode::Line).unwrap() {
+        match compare_paths(&a, &b, DiffMode::Line, &DiffOptions::default()).unwrap() {
             Comparison::Text { left_text, left_encoding, right_encoding, rows, .. } => {
                 assert_eq!(left_text, text);
                 assert_eq!(left_encoding.name, "Shift_JIS");
@@ -205,7 +321,7 @@ mod tests {
         let (a, b) = (d.path().join("a.bin"), d.path().join("b.txt"));
         fs::write(&a, [0u8, 1, 2]).unwrap();
         fs::write(&b, "text").unwrap();
-        match compare_paths(&a, &b, DiffMode::Line).unwrap() {
+        match compare_paths(&a, &b, DiffMode::Line, &DiffOptions::default()).unwrap() {
             Comparison::Binary { left_size, right_size, rows } => {
                 assert_eq!((left_size, right_size), (3, 4));
                 assert_eq!(rows.len(), 1);
@@ -218,7 +334,7 @@ mod tests {
     fn compares_directories() {
         let (l, r) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         fs::write(l.path().join("a"), "x").unwrap();
-        match compare_paths(l.path(), r.path(), DiffMode::Line).unwrap() {
+        match compare_paths(l.path(), r.path(), DiffMode::Line, &DiffOptions::default()).unwrap() {
             Comparison::Directory { entries } => assert_eq!(entries.len(), 1),
             _ => panic!("expected directory"),
         }
@@ -229,7 +345,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let f = d.path().join("f");
         fs::write(&f, "x").unwrap();
-        assert!(compare_paths(d.path(), &f, DiffMode::Line).is_err());
+        assert!(compare_paths(d.path(), &f, DiffMode::Line, &DiffOptions::default()).is_err());
     }
 
     #[test]
@@ -239,7 +355,7 @@ mod tests {
         let f = fs::File::create(&big).unwrap();
         f.set_len(MAX_FILE_SIZE + 1).unwrap();
         assert!(read_limited(&big).is_err());
-        assert!(compare_paths(&big, &big, DiffMode::Line).is_err());
+        assert!(compare_paths(&big, &big, DiffMode::Line, &DiffOptions::default()).is_err());
         assert!(read_limited(&d.path().join("none")).is_err());
     }
 

@@ -4,13 +4,15 @@ interface Props {
   info?: string;
   choosing: boolean;
   onPick: () => void;
+  /** 開いているファイル/フォルダを閉じる */
+  onClose: () => void;
   onChoose: (directory: boolean) => void;
 }
 
 const NAME = { left: "左", right: "右" } as const;
 
-/** ペイン上部のパス表示欄。右端にフォルダアイコンの選択ボタンを置く。 */
-export function PathPicker({ side, value, info, choosing, onPick, onChoose }: Props) {
+/** ペイン上部のパス表示欄。右端にフォルダアイコンの選択ボタンと、閉じる(✕)ボタンを置く。 */
+export function PathPicker({ side, value, info, choosing, onPick, onChoose, onClose }: Props) {
   return (
     <div className={`picker ${side}`}>
       <div className="path-box">
@@ -26,6 +28,9 @@ export function PathPicker({ side, value, info, choosing, onPick, onChoose }: Pr
         )}
         <button className="icon" aria-label={`${NAME[side]}を選択`} title="ファイルまたはフォルダを選択" onClick={onPick}>
           📁
+        </button>
+        <button className="icon" aria-label={`${NAME[side]}を閉じる`} title="閉じる" disabled={!value} onClick={onClose}>
+          ✕
         </button>
       </div>
     </div>

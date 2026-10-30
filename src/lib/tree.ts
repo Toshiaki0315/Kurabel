@@ -38,3 +38,18 @@ export function buildTree(entries: DirEntry[]): TreeNode[] {
 export function hasDiff(node: TreeNode): boolean {
   return node.status !== "same" || node.children.some(hasDiff);
 }
+
+export type StatusFilter = "all" | "diff" | "added" | "removed" | "modified";
+
+/** 自身が条件（状態・名前）に合うか、配下に合うものがあれば表示する。 */
+export function isVisible(node: TreeNode, filter: StatusFilter, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  const statusOk = filter === "all" || (filter === "diff" ? node.status !== "same" : node.status === filter);
+  const nameOk = q === "" || node.name.toLowerCase().includes(q);
+  return (statusOk && nameOk) || node.children.some((c) => isVisible(c, filter, query));
+}
+
+/** 子を持つディレクトリのパス一覧（「すべて閉じる」用）。 */
+export function collapsibleDirs(nodes: TreeNode[]): string[] {
+  return nodes.flatMap((n) => [...(n.children.length > 0 ? [n.path] : []), ...collapsibleDirs(n.children)]);
+}

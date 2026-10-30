@@ -62,6 +62,19 @@ fn collect(root: &Path) -> Result<Tree, String> {
     Ok(tree)
 }
 
+/// 片方だけ開いているとき用の一覧（比較対象がないので状態は Same）。
+pub fn list_dir(root: &Path, left_side: bool) -> Result<Vec<DirEntry>, String> {
+    Ok(collect(root)?
+        .into_iter()
+        .map(|(path, (kind, _))| DirEntry {
+            path,
+            left: left_side.then_some(kind),
+            right: (!left_side).then_some(kind),
+            status: DirStatus::Same,
+        })
+        .collect())
+}
+
 pub fn files_equal(a: &Path, b: &Path) -> io::Result<bool> {
     let (mut fa, mut fb) = (File::open(a)?, File::open(b)?);
     if fa.metadata()?.len() != fb.metadata()?.len() {
@@ -148,6 +161,19 @@ mod tests {
         let mut sorted = paths.clone();
         sorted.sort();
         assert_eq!(paths, sorted);
+    }
+
+    #[test]
+    fn lists_a_single_directory() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir(d.path().join("sub")).unwrap();
+        fs::write(d.path().join("sub/a.txt"), "x").unwrap();
+        let left = list_dir(d.path(), true).unwrap();
+        assert_eq!(left.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["sub", "sub/a.txt"]);
+        assert!(left.iter().all(|e| e.left.is_some() && e.right.is_none() && e.status == DirStatus::Same));
+        let right = list_dir(d.path(), false).unwrap();
+        assert!(right.iter().all(|e| e.left.is_none() && e.right.is_some()));
+        assert!(list_dir(&d.path().join("nope"), true).is_err());
     }
 
     #[test]

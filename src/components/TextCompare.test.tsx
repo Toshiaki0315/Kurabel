@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import type { DiffRow } from "../types";
@@ -11,6 +12,7 @@ vi.mock("../api", () => ({
 
 import { TextCompare } from "./TextCompare";
 
+const OPTS = { ignore_whitespace: false, ignore_case: false };
 const SJIS = { name: "Shift_JIS", bom: false };
 const UTF8 = { name: "UTF-8", bom: false };
 const seg = (text: string, changed = false) => ({ text, changed });
@@ -20,7 +22,7 @@ const rows: DiffRow[] = [
 ];
 
 const setup = (mode: "line" | "word" = "line") =>
-  render(<TextCompare leftText={"same\na old"} rightText={"same\na new"} rows={rows} mode={mode} leftPath="/l.txt" rightPath="/r.txt" leftEncoding={SJIS} rightEncoding={UTF8} />);
+  render(<TextCompare leftText={"same\na old"} rightText={"same\na new"} rows={rows} mode={mode} leftPath="/l.txt" rightPath="/r.txt" options={OPTS} leftEncoding={SJIS} rightEncoding={UTF8} />);
 
 /** jsdom には execCommand が無いので、フォーカス中の textarea の選択範囲を置換する簡易版を用意する。 */
 function installExecCommand() {
@@ -56,7 +58,7 @@ describe("TextCompare", () => {
     fireEvent.change(screen.getByLabelText("右のテキスト"), { target: { value: "y" } });
     expect(screen.getAllByText("1")).toHaveLength(2); // 左右の編集ペインそれぞれに行番号
     fireEvent.scroll(screen.getByLabelText("左のテキスト"), { target: { scrollTop: 10 } });
-    await waitFor(() => expect(diffText).toHaveBeenCalledWith("x", "y", "line"), { timeout: 2000 });
+    await waitFor(() => expect(diffText).toHaveBeenCalledWith("x", "y", "line", OPTS), { timeout: 2000 });
     await waitFor(() => expect(screen.getByText("差分 0 行")).toBeInTheDocument());
   });
 
@@ -78,8 +80,8 @@ describe("TextCompare", () => {
     diffText.mockResolvedValue(rows);
     const { rerender } = setup("line");
     expect(diffText).not.toHaveBeenCalled();
-    rerender(<TextCompare leftText={"same\na old"} rightText={"same\na new"} rows={rows} mode="word" leftPath="/l.txt" rightPath="/r.txt" leftEncoding={SJIS} rightEncoding={UTF8} />);
-    await waitFor(() => expect(diffText).toHaveBeenCalledWith("same\na old", "same\na new", "word"));
+    rerender(<TextCompare leftText={"same\na old"} rightText={"same\na new"} rows={rows} mode="word" leftPath="/l.txt" rightPath="/r.txt" options={OPTS} leftEncoding={SJIS} rightEncoding={UTF8} />);
+    await waitFor(() => expect(diffText).toHaveBeenCalledWith("same\na old", "same\na new", "word", OPTS));
   });
 
   it("shows an error when re-diff fails", async () => {
@@ -168,14 +170,14 @@ describe("TextCompare", () => {
       { kind: "insert", left: null, right: cell(4, "e") },
     ];
     const msetup = () =>
-      render(<TextCompare leftText={"a\nb\nc"} rightText={"a\nX\nc\ne"} rows={mrows} mode="line" leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+      render(<TextCompare leftText={"a\nb\nc"} rightText={"a\nX\nc\ne"} rows={mrows} mode="line" leftPath="/l" rightPath="/r" options={OPTS} leftEncoding={UTF8} rightEncoding={UTF8} />);
 
     it("merges via insertText so the native undo history is kept, and re-diffs immediately", async () => {
       diffText.mockResolvedValue([]);
       msetup();
       fireEvent.click(screen.getByRole("button", { name: "差分1を左から右へ反映" }));
       expect(document.execCommand).toHaveBeenCalledWith("insertText", false, "b");
-      await waitFor(() => expect(diffText).toHaveBeenCalledWith("a\nb\nc", "a\nb\nc\ne", "line"));
+      await waitFor(() => expect(diffText).toHaveBeenCalledWith("a\nb\nc", "a\nb\nc\ne", "line", OPTS));
       expect(screen.getByText("未保存の変更あり")).toBeInTheDocument();
       expect((screen.getByLabelText("右のテキスト") as HTMLTextAreaElement).value).toBe("a\nb\nc\ne");
       expect(screen.queryByText("マージを取り消す")).toBeNull();
@@ -186,14 +188,14 @@ describe("TextCompare", () => {
       msetup();
       fireEvent.click(screen.getByRole("button", { name: "差分2を左から右へ反映" }));
       expect(document.execCommand).toHaveBeenCalledWith("delete");
-      await waitFor(() => expect(diffText).toHaveBeenCalledWith("a\nb\nc", "a\nX\nc", "line"));
+      await waitFor(() => expect(diffText).toHaveBeenCalledWith("a\nb\nc", "a\nX\nc", "line", OPTS));
     });
 
     it("merges right to left", async () => {
       diffText.mockResolvedValue([]);
       msetup();
       fireEvent.click(screen.getByRole("button", { name: "差分2を右から左へ反映" }));
-      await waitFor(() => expect(diffText).toHaveBeenCalledWith("a\nb\nc\ne", "a\nX\nc\ne", "line"));
+      await waitFor(() => expect(diffText).toHaveBeenCalledWith("a\nb\nc\ne", "a\nX\nc\ne", "line", OPTS));
       expect((screen.getByLabelText("左のテキスト") as HTMLTextAreaElement).value).toBe("a\nb\nc\ne");
     });
 
@@ -225,10 +227,64 @@ describe("TextCompare", () => {
     });
 
     it("disables navigation when there are no differences", () => {
-      render(<TextCompare leftText="a" rightText="a" rows={[{ kind: "equal", left: cell(1, "a"), right: cell(1, "a") }]} mode="line" leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+      render(<TextCompare leftText="a" rightText="a" rows={[{ kind: "equal", left: cell(1, "a"), right: cell(1, "a") }]} mode="line" leftPath="/l" rightPath="/r" options={OPTS} leftEncoding={UTF8} rightEncoding={UTF8} />);
       expect(screen.getByRole("button", { name: "次の差分" })).toBeDisabled();
       fireEvent.keyDown(window, { key: "F7" });
       expect(screen.queryByText(/箇所/)).toBeNull();
     });
+  });
+
+  it("re-diffs when the compare options change", async () => {
+    diffText.mockResolvedValue([]);
+    const { rerender } = setup("line");
+    rerender(<TextCompare leftText={"same\na old"} rightText={"same\na new"} rows={rows} mode="line" options={{ ignore_whitespace: true, ignore_case: false }} leftPath="/l.txt" rightPath="/r.txt" leftEncoding={SJIS} rightEncoding={UTF8} />);
+    await waitFor(() => expect(diffText).toHaveBeenCalledWith("same\na old", "same\na new", "line", { ignore_whitespace: true, ignore_case: false }));
+  });
+
+  it("reports unsaved changes and clears the flag on unmount", async () => {
+    const onDirtyChange = vi.fn();
+    saveText.mockResolvedValue(undefined);
+    diffText.mockResolvedValue([]);
+    const { unmount } = render(<TextCompare leftText="a" rightText="b" rows={[]} mode="line" options={OPTS} onDirtyChange={onDirtyChange} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByText("編集"));
+    fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "x" } });
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "左を保存" }));
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
+    fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "y" } });
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    unmount();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("shows a single file read-only: no edit, save, diff count or navigation", () => {
+    const cell = (n: number, text: string) => ({ line_no: n, segments: [{ text, changed: false }] });
+    const plain: DiffRow[] = [{ kind: "equal", left: cell(1, "only"), right: null }];
+    const { container } = render(<TextCompare leftText="only" rightText="" rows={plain} mode="line" options={OPTS} leftPath="/l" rightPath={null} leftEncoding={UTF8} rightEncoding={UTF8} />);
+    expect(container.querySelector(".diff-table")).toHaveTextContent("only");
+    for (const label of ["編集", "差分", "保存"]) expect(screen.queryByText(new RegExp(label))).toBeNull();
+    expect(screen.queryByRole("button", { name: "次の差分" })).toBeNull();
+    expect(container.querySelector(".pane-actions")).toBeNull();
+    expect(container.querySelector(".edit-panes")).toHaveClass("offscreen");
+    fireEvent.keyDown(window, { key: "F7" });
+    expect(saveText).not.toHaveBeenCalled();
+  });
+
+  it("does not re-diff on mount, even when effects run twice (StrictMode)", async () => {
+    render(
+      <StrictMode>
+        <TextCompare leftText="a" rightText="b" rows={[]} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />
+      </StrictMode>,
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(diffText).not.toHaveBeenCalled();
+  });
+
+  it("never diffs a single opened file against nothing, even if mode or text changes", async () => {
+    const { rerender } = render(<TextCompare leftText="only" rightText="" rows={[]} mode="line" options={OPTS} leftPath="/l" rightPath={null} leftEncoding={UTF8} rightEncoding={UTF8} />);
+    rerender(<TextCompare leftText="only" rightText="" rows={[]} mode="word" options={OPTS} leftPath="/l" rightPath={null} leftEncoding={UTF8} rightEncoding={UTF8} />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(diffText).not.toHaveBeenCalled();
   });
 });
