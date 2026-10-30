@@ -2,6 +2,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { AUTO_ENCODING, type Comparison, type DiffMode, type DiffOptions, type DiffRow, type EncodingChoice, type Merge3, type TextEncoding } from "./types";
 
+/**
+ * バックエンドは、左右が同じ文の行では右の本文を省いて送る（通信量の削減）。左の内容で補う。
+ * 配列は書き換えて返す。
+ */
+export function expandRows(rows: DiffRow[]): DiffRow[] {
+  for (const r of rows) {
+    if (r.right && r.left && r.right.segments.length === 0) r.right = { ...r.right, segments: r.left.segments };
+  }
+  return rows;
+}
+
 /** 片方が null のときは、もう片方だけをそのまま表示する。 */
 export function comparePaths(
   left: string | null,
@@ -10,11 +21,14 @@ export function comparePaths(
   options: DiffOptions,
   encodings: EncodingChoice = AUTO_ENCODING,
 ): Promise<Comparison> {
-  return invoke<Comparison>("compare_paths", { left, right, mode, options, encodings });
+  return invoke<Comparison>("compare_paths", { left, right, mode, options, encodings }).then((c) => {
+    if (c?.kind === "text") expandRows(c.rows);
+    return c;
+  });
 }
 
 export function diffText(left: string, right: string, mode: DiffMode, options: DiffOptions): Promise<DiffRow[]> {
-  return invoke<DiffRow[]>("diff_text", { left, right, mode, options });
+  return invoke<DiffRow[]>("diff_text", { left, right, mode, options }).then(expandRows);
 }
 
 /** 読み込み時の文字コード（BOM含む）のまま書き戻す。 */

@@ -10,7 +10,7 @@ describe("settings", () => {
   it("round-trips saved settings", () => {
     const s = {
       mode: "word" as const,
-      options: { ignore_whitespace: true, ignore_case: true, exclude: [".git", "*.obj"], recursive: false, quick: true },
+      options: { ...DEFAULT_SETTINGS.options, ignore_whitespace: true, ignore_case: true, exclude: [".git", "*.obj"], recursive: false, quick: true, ignore_comments: true, comment_prefixes: ["--"], detect_moves: false },
     };
     saveSettings(s);
     expect(loadSettings()).toEqual(s);
@@ -34,5 +34,16 @@ describe("settings", () => {
   it("parses the exclude pattern input", () => {
     expect(parseExclude(" .git, *.obj\n\n node_modules ,, ")).toEqual([".git", "*.obj", "node_modules"]);
     expect(parseExclude("")).toEqual([]);
+  });
+
+  it("sanitizes the new comparison options", () => {
+    localStorage.setItem("kurabel.settings", JSON.stringify({ options: { comment_prefixes: ["//", 1], detect_moves: false, ignore_blank_lines: true } }));
+    const o = loadSettings().options;
+    expect(o.comment_prefixes).toEqual(["//"]);
+    expect(o.detect_moves).toBe(false);
+    expect(o.ignore_blank_lines).toBe(true);
+    localStorage.setItem("kurabel.settings", JSON.stringify({ options: { comment_prefixes: "nope" } }));
+    expect(loadSettings().options.comment_prefixes).toEqual(DEFAULT_SETTINGS.options.comment_prefixes);
+    expect(loadSettings().options.detect_moves).toBe(true);
   });
 });

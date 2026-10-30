@@ -3,6 +3,13 @@
 use serde::Serialize;
 
 pub const BYTES_PER_ROW: usize = 16;
+/// 画面へ送る行数の上限（巨大なバイナリで通信量・描画が膨らまないよう、先頭部分だけを返す）
+pub const MAX_BINARY_ROWS: usize = 8192;
+
+/// 上限を超えて、先頭部分しか返していないか
+pub fn is_truncated(left_len: usize, right_len: usize) -> bool {
+    left_len.max(right_len) > MAX_BINARY_ROWS * BYTES_PER_ROW
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ByteCell {
@@ -30,6 +37,7 @@ fn cell(byte: u8, other: Option<&u8>) -> ByteCell {
 /// 片方だけ開いているとき用の16進ダンプ（ハイライトなし、反対側は空）。
 pub fn dump_single(data: &[u8], left_side: bool) -> Vec<BinaryRow> {
     data.chunks(BYTES_PER_ROW)
+        .take(MAX_BINARY_ROWS)
         .enumerate()
         .map(|(i, chunk)| {
             let cells: Vec<ByteCell> = chunk.iter().map(|b| cell(*b, Some(b))).collect();
@@ -40,7 +48,7 @@ pub fn dump_single(data: &[u8], left_side: bool) -> Vec<BinaryRow> {
 }
 
 pub fn dump_diff(left: &[u8], right: &[u8]) -> Vec<BinaryRow> {
-    let total = left.len().max(right.len());
+    let total = left.len().max(right.len()).min(MAX_BINARY_ROWS * BYTES_PER_ROW);
     let mut rows = Vec::new();
     let mut offset = 0;
     while offset < total {
@@ -106,5 +114,14 @@ mod tests {
         let rows = dump_single(b"AB", false);
         assert!(rows[0].left.is_empty() && rows[0].right.len() == 2);
         assert!(dump_single(&[], true).is_empty());
+    }
+
+    #[test]
+    fn caps_the_number_of_rows_for_huge_data() {
+        let big = vec![1u8; MAX_BINARY_ROWS * BYTES_PER_ROW + 100];
+        assert!(is_truncated(big.len(), 0));
+        assert!(!is_truncated(MAX_BINARY_ROWS * BYTES_PER_ROW, 5));
+        assert_eq!(dump_diff(&big, &big).len(), MAX_BINARY_ROWS);
+        assert_eq!(dump_single(&big, true).len(), MAX_BINARY_ROWS);
     }
 }

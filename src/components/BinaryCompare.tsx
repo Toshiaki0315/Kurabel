@@ -26,13 +26,14 @@ function Side({ offset, cells }: { offset: number; cells: ByteCell[] }) {
   );
 }
 
-export function BinaryCompare(props: { rows: BinaryRow[] }) {
+export function BinaryCompare(props: { rows: BinaryRow[]; truncated?: boolean }) {
   const [shown, setShown] = useState(PAGE);
   const visible = props.rows.slice(0, shown);
   return (
     <section className="binary-compare">
       <ToolbarPortal>
         <span>バイナリ比較（読み取り専用）</span>
+        {props.truncated && <span className="summary">大きいため、先頭 {props.rows.length * 16} バイトのみ表示しています</span>}
       </ToolbarPortal>
       <table className="diff-table mono">
         <tbody>

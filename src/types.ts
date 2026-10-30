@@ -3,6 +3,14 @@ export type DiffMode = "line" | "word";
 export interface DiffOptions {
   ignore_whitespace: boolean;
   ignore_case: boolean;
+  /** 空行の追加・削除を差分として扱わない */
+  ignore_blank_lines: boolean;
+  /** コメントの違いを無視する */
+  ignore_comments: boolean;
+  /** 行コメントの開始文字列（例: `//`、`#`） */
+  comment_prefixes: string[];
+  /** 移動した行を検出して印を付ける */
+  detect_moves: boolean;
   /** フォルダ比較で除外するパターン（`*` と `?` が使える） */
   exclude: string[];
   /** フォルダ比較でサブフォルダも含める */
@@ -14,6 +22,10 @@ export interface DiffOptions {
 export const DEFAULT_OPTIONS: DiffOptions = {
   ignore_whitespace: false,
   ignore_case: false,
+  ignore_blank_lines: false,
+  ignore_comments: false,
+  comment_prefixes: ["//", "#"],
+  detect_moves: true,
   exclude: [],
   recursive: true,
   quick: false,
@@ -42,6 +54,8 @@ export interface DiffRow {
   kind: RowKind;
   left: Cell | null;
   right: Cell | null;
+  /** 別の場所へ移動した行（削除側・追加側の両方に付く） */
+  moved?: boolean;
 }
 
 export interface ByteCell {
@@ -98,5 +112,5 @@ export type Comparison =
       right_eol: string;
       rows: DiffRow[];
     }
-  | { kind: "binary"; left_size: number; right_size: number; rows: BinaryRow[] }
+  | { kind: "binary"; left_size: number; right_size: number; truncated: boolean; rows: BinaryRow[] }
   | { kind: "directory"; entries: DirEntry[] };

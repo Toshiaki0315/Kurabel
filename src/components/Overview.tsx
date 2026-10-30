@@ -17,7 +17,7 @@ export function Overview({ rows, blocks, cursor, onJump }: Props) {
       {blocks.map((b, i) => (
         <button
           key={b.start}
-          className={`ov-mark ov-${rows[b.start].kind}${i === cursor ? " current" : ""}`}
+          className={`ov-mark ov-${rows[b.start].kind}${rows[b.start].moved ? " ov-moved" : ""}${i === cursor ? " current" : ""}`}
           style={{ top: `${(b.start / total) * 100}%`, height: `${Math.max(((b.end - b.start) / total) * 100, 0.8)}%` }}
           aria-label={`差分${i + 1}へ移動`}
           onClick={() => onJump(i)}

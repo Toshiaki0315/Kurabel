@@ -58,7 +58,7 @@ function Result(props: ResultProps) {
     case "text":
       return <TextCompare leftText={result.left_text} rightText={result.right_text} rows={result.rows} mode={props.mode} options={props.options} onDirtyChange={props.onDirtyChange} leftPath={props.leftPath} rightPath={props.rightPath} leftEncoding={result.left_encoding} rightEncoding={result.right_encoding} onThreeWay={props.onThreeWay} />;
     case "binary":
-      return <BinaryCompare rows={result.rows} />;
+      return <BinaryCompare rows={result.rows} truncated={result.truncated} />;
     case "directory":
       return <DirCompare entries={result.entries} onOpen={props.onOpen ?? (() => {})} onCopy={props.onCopy} onDelete={props.onDelete} single={props.leftPath === null || props.rightPath === null} />;
   }

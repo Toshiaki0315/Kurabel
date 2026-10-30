@@ -1,5 +1,5 @@
-:root { --mid: 3.5em; color-scheme: light dark; font-family: system-ui, "Hiragino Sans", sans-serif; --add:#d1f5d8; --del:#ffd7d5; --mod:#fff3bf; --chg:#ffb454; }
-@media (prefers-color-scheme: dark) { :root { --add:#1e4620; --del:#5a1e1e; --mod:#5a4b10; --chg:#a15c00; } }
+:root { --mid: 3.5em; --moved:#e3d6ff; color-scheme: light dark; font-family: system-ui, "Hiragino Sans", sans-serif; --add:#d1f5d8; --del:#ffd7d5; --mod:#fff3bf; --chg:#ffb454; }
+@media (prefers-color-scheme: dark) { :root { --moved:#42337a; --add:#1e4620; --del:#5a1e1e; --mod:#5a4b10; --chg:#a15c00; } }
 body { margin: 0; font-size: 14px; }
 button, select, input { font: inherit; }
 .app { display: flex; flex-direction: column; height: 100vh; }
@@ -104,3 +104,13 @@ main { position: relative; }
 .tw-result .numbered { flex: 1; min-height: 0; }
 .tw-result .editor textarea { min-height: 0; }
 .dim { opacity: .55; }
+.row-moved .left, .row-moved .right, .hl-moved { background: var(--moved); }
+.ov-moved { background: var(--moved); }
+.dialog label.indent { margin-left: 22px; }
+.dialog input[type="text"] { flex: 1; }
+.numbered.active-pane { outline: 2px solid #38f8; outline-offset: -2px; }
+.find input[type="text"] { width: 10em; }
+.diff-table.virtual td { white-space: pre; overflow: hidden; height: 18px; line-height: 18px; padding-top: 0; padding-bottom: 0; }
+.diff-table.virtual tr { height: 18px; }
+.diff-table.virtual td.merge { white-space: nowrap; }
+.diff-table.virtual td.merge button { padding: 0 4px; margin: 0 1px; font-size: 11px; line-height: 16px; }

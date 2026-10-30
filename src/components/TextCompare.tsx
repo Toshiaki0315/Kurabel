@@ -1,21 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { diffText, makePatch, pickPatchPath, saveText, writePatch } from "../api";
-import { findMatches, type Match } from "../lib/find";
+import { findMatches, replaceAll, replaceMatch, type Match } from "../lib/find";
 import { baseName } from "../lib/recent";
 import { applyBlock, blockLines, correspondingLine, findBlocks, type Side } from "../lib/merge";
 import type { DiffMode, DiffOptions, DiffRow, TextEncoding } from "../types";
 import { CellText } from "./Segments";
 import { Overview } from "./Overview";
 import { OverviewPortal, ToolbarPortal } from "./ToolbarSlot";
-import { NumberedTextarea, type EditorHandle, type LineHighlight } from "./NumberedTextarea";
+import { LINE_HEIGHT, NumberedTextarea, type EditorHandle, type LineHighlight } from "./NumberedTextarea";
 
 const REDIFF_DELAY_MS = 300;
+/** これを超える行数の差分表は、画面に見える範囲の行だけを描画する（1行の高さを固定して位置を計算する） */
+export const VIRTUAL_ROWS = 2000;
+const OVERSCAN = 40;
 
 function highlightsFor(rows: DiffRow[], side: Side): Map<number, LineHighlight> {
   const map = new Map<number, LineHighlight>();
   for (const row of rows) {
     const cell = row[side];
-    if (cell && row.kind !== "equal") map.set(cell.line_no, { kind: row.kind, segments: cell.segments });
+    if (cell && row.kind !== "equal") map.set(cell.line_no, { kind: row.kind, moved: row.moved, segments: cell.segments });
   }
   return map;
 }
@@ -49,21 +52,70 @@ export function TextCompare(props: Props) {
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [findIndex, setFindIndex] = useState(0);
+  const [replacement, setReplacement] = useState("");
+  // 検索・置換の対象は、最後にフォーカス（またはクリック）したペイン
+  const [activeSide, setActiveSide] = useState<Side>("left");
   const [notice, setNotice] = useState<string | null>(null);
   const applied = useRef({ mode: props.mode, options: props.options });
   const diffed = useRef({ left: props.leftText, right: props.rightText });
   const seq = useRef(0);
   const root = useRef<HTMLElement>(null);
+  const table = useRef<HTMLTableElement>(null);
+  const [win, setWin] = useState({ start: 0, end: 200 });
+  const ticking = useRef(false);
   const editors = { left: useRef<EditorHandle>(null), right: useRef<EditorHandle>(null) };
 
   const blocks = useMemo(() => findBlocks(rows), [rows]);
   const blockAt = useMemo(() => new Map(blocks.map((b, i) => [b.start, i])), [blocks]);
 
-  // 検索（⌘F）: 左右のテキストから一致箇所を列挙し、現在の一致を表示位置まで移動する
-  const matches = useMemo(() => (findOpen ? findMatches(leftText, rightText, query) : []), [findOpen, leftText, rightText, query]);
+  // 大きなファイル: スクロール位置から、描画する行の範囲を求める
+  const virtual = rows.length > VIRTUAL_ROWS;
+  const scroller = (): HTMLElement | null => root.current?.closest("main") ?? root.current?.parentElement ?? null;
+  const tableTop = (el: HTMLElement) =>
+    table.current ? table.current.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop : 0;
+  const updateWindow = useCallback(() => {
+    const el = scroller();
+    if (!el || !table.current) return;
+    const first = Math.max(0, Math.floor((el.scrollTop - tableTop(el)) / LINE_HEIGHT));
+    const start = Math.max(0, first - OVERSCAN);
+    const end = Math.min(rows.length, first + Math.ceil((el.clientHeight || 800) / LINE_HEIGHT) + OVERSCAN);
+    setWin((w) => (w.start === start && w.end === end ? w : { start, end }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
+  const scrollToRow = (index: number) => {
+    const el = scroller();
+    if (el) el.scrollTop = Math.max(0, tableTop(el) + index * LINE_HEIGHT - (el.clientHeight || 800) / 2);
+  };
+
+  // 検索（⌘F）: フォーカスのあるペインのテキストから一致箇所を列挙し、現在の一致を表示位置まで移動する
+  const activeText = activeSide === "left" ? leftText : rightText;
+  const matches = useMemo(() => (findOpen ? findMatches(activeText, query) : []), [findOpen, activeText, query]);
   const active: Match | null = matches.length > 0 ? matches[Math.min(findIndex, matches.length - 1)] : null;
-  const isHit = (side: Side, line: number | undefined) => active !== null && active.side === side && active.line === line;
-  const hitIn = (side: Side) => (active && active.side === side ? { line: active.line, start: active.start, length: active.length } : undefined);
+  const isHit = (side: Side, line: number | undefined) => active !== null && side === activeSide && active.line === line;
+  const hitIn = (side: Side) => (active && side === activeSide ? { line: active.line, start: active.start, length: active.length } : undefined);
+
+  useEffect(() => {
+    const el = scroller();
+    if (!virtual || !el) return;
+    const onScroll = () => {
+      if (ticking.current) return;
+      ticking.current = true;
+      const apply = () => {
+        ticking.current = false;
+        updateWindow();
+      };
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(apply);
+      else apply();
+    };
+    updateWindow();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [virtual, updateWindow, editing]);
 
   const rediff = async (l: string, r: string, mode: DiffMode) => {
     if (props.leftPath === null || props.rightPath === null) return; // 1つだけのときは比較しない
@@ -108,7 +160,8 @@ export function TextCompare(props: Props) {
       editors.left.current?.scrollToLine(Math.max(1, left - 2));
       editors.right.current?.scrollToLine(Math.max(1, right - 2));
     } else {
-      root.current?.querySelector(`[data-block="${index}"]`)?.scrollIntoView?.({ block: "center" });
+      if (virtual) scrollToRow(blocks[index].start);
+      else root.current?.querySelector(`[data-block="${index}"]`)?.scrollIntoView?.({ block: "center" });
     }
   };
   const step = (delta: 1 | -1) => {
@@ -122,10 +175,21 @@ export function TextCompare(props: Props) {
   // 現在の一致が変わったら、その位置までスクロールする
   useEffect(() => {
     if (!active) return;
-    if (editing) editors[active.side].current?.scrollToLine(Math.max(1, active.line - 2));
-    else root.current?.querySelector(`[data-${active.side}-line="${active.line}"]`)?.scrollIntoView?.({ block: "center" });
+    if (editing) editors[activeSide].current?.scrollToLine(Math.max(1, active.line - 2));
+    else if (virtual) scrollToRow(Math.max(0, rows.findIndex((r) => r[activeSide]?.line_no === active.line)));
+    else root.current?.querySelector(`[data-${activeSide}-line="${active.line}"]`)?.scrollIntoView?.({ block: "center" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.side, active?.line, active?.start, editing]);
+  }, [activeSide, active?.line, active?.start, editing]);
+
+  // 置換は編集モードのときだけ。insertText 経由で反映するので、⌘Z で元に戻せる
+  const replaceCurrent = () => {
+    if (!editing || !active) return;
+    editors[activeSide].current?.replaceText(replaceMatch(activeText, active, replacement));
+  };
+  const replaceEvery = () => {
+    if (!editing || matches.length === 0) return;
+    editors[activeSide].current?.replaceText(replaceAll(activeText, query, replacement));
+  };
 
   const exportPatch = async () => {
     if (props.leftPath === null || props.rightPath === null) return;
@@ -253,6 +317,27 @@ export function TextCompare(props: Props) {
                 <button aria-label="検索を閉じる" onClick={() => setFindOpen(false)}>
                   ✕
                 </button>
+                <span className="summary">対象: {activeSide === "left" ? "左" : "右"}ペイン</span>
+                {editing && (
+                  <>
+                    <input
+                      type="text"
+                      aria-label="置換後"
+                      placeholder="置換後"
+                      value={replacement}
+                      onChange={(e) => setReplacement(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") replaceCurrent();
+                      }}
+                    />
+                    <button disabled={!active} onClick={replaceCurrent}>
+                      置換
+                    </button>
+                    <button disabled={matches.length === 0} onClick={replaceEvery}>
+                      すべて置換
+                    </button>
+                  </>
+                )}
               </span>
             )}
           </>
@@ -273,19 +358,25 @@ export function TextCompare(props: Props) {
       )}
       {/* 編集→表示→編集でも元に戻す履歴を保つため、テキストエリアは常に保持し表示だけ切り替える */}
       <div className={editing && !single ? "edit-panes" : "edit-panes offscreen"} aria-hidden={!editing || single}>
-        <NumberedTextarea ref={editors.left} label="左のテキスト" value={leftText} onChange={setLeftText} onSave={saveShortcut("left")} onScrollLine={syncFrom("left")} highlights={highlightsFor(rows, "left")} findHit={hitIn("left")} />
+        <NumberedTextarea ref={editors.left} label="左のテキスト" value={leftText} onChange={setLeftText} onSave={saveShortcut("left")} onScrollLine={syncFrom("left")} highlights={highlightsFor(rows, "left")} findHit={hitIn("left")} onFocusPane={() => setActiveSide("left")} active={findOpen && editing && activeSide === "left"} />
         <div className="mid" />
-        <NumberedTextarea ref={editors.right} label="右のテキスト" value={rightText} onChange={setRightText} onSave={saveShortcut("right")} onScrollLine={syncFrom("right")} highlights={highlightsFor(rows, "right")} findHit={hitIn("right")} />
+        <NumberedTextarea ref={editors.right} label="右のテキスト" value={rightText} onChange={setRightText} onSave={saveShortcut("right")} onScrollLine={syncFrom("right")} highlights={highlightsFor(rows, "right")} findHit={hitIn("right")} onFocusPane={() => setActiveSide("right")} active={findOpen && editing && activeSide === "right"} />
       </div>
       {(!editing || single) && (
-        <table className="diff-table">
+        <table className={virtual ? "diff-table virtual" : "diff-table"} ref={table}>
           <tbody>
-            {rows.map((row, i) => {
+            {virtual && win.start > 0 && (
+              <tr aria-hidden="true" style={{ height: win.start * LINE_HEIGHT }}>
+                <td colSpan={5} />
+              </tr>
+            )}
+            {(virtual ? rows.slice(win.start, win.end) : rows).map((row, k) => {
+              const i = virtual ? win.start + k : k;
               const b = blockAt.get(i);
               return (
-                <tr key={i} className={`row-${row.kind}${inCurrent(i) ? " row-current" : ""}`} data-block={b}>
+                <tr key={i} className={`row-${row.kind}${row.moved ? " row-moved" : ""}${inCurrent(i) ? " row-current" : ""}`} title={row.moved ? "別の場所から移動した行" : undefined} data-block={b}>
                   <td className="ln">{row.left?.line_no}</td>
-                  <td className={`code left${isHit("left", row.left?.line_no) ? " find-hit-cell" : ""}`} data-left-line={row.left?.line_no}>
+                  <td className={`code left${isHit("left", row.left?.line_no) ? " find-hit-cell" : ""}`} data-left-line={row.left?.line_no} onMouseDown={() => setActiveSide("left")}>
                     <CellText cell={row.left} />
                   </td>
                   <td className="mid merge">
@@ -301,12 +392,17 @@ export function TextCompare(props: Props) {
                     )}
                   </td>
                   <td className="ln">{row.right?.line_no}</td>
-                  <td className={`code right${isHit("right", row.right?.line_no) ? " find-hit-cell" : ""}`} data-right-line={row.right?.line_no}>
+                  <td className={`code right${isHit("right", row.right?.line_no) ? " find-hit-cell" : ""}`} data-right-line={row.right?.line_no} onMouseDown={() => setActiveSide("right")}>
                     <CellText cell={row.right} />
                   </td>
                 </tr>
               );
             })}
+            {virtual && win.end < rows.length && (
+              <tr aria-hidden="true" style={{ height: (rows.length - win.end) * LINE_HEIGHT }}>
+                <td colSpan={5} />
+              </tr>
+            )}
           </tbody>
         </table>
       )}

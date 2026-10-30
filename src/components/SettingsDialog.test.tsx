@@ -57,4 +57,29 @@ describe("SettingsDialog", () => {
     fireEvent.change(screen.getByLabelText("フォルダの比較方法"), { target: { value: "content" } });
     expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, options: { ...DEFAULT_OPTIONS, exclude: [".git"], quick: false } });
   });
+
+  it("edits blank-line, comment and move-detection settings", () => {
+    const { onChange } = setup();
+    fireEvent.click(screen.getByLabelText("空行の追加・削除"));
+    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, options: { ...DEFAULT_OPTIONS, ignore_blank_lines: true } });
+    const prefixes = screen.getByLabelText("コメントの開始文字列") as HTMLInputElement;
+    expect(prefixes).toBeDisabled(); // コメントを無視しない間は編集できない
+    expect(prefixes.value).toBe("//, #");
+    fireEvent.click(screen.getByLabelText("コメントの違い"));
+    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, options: { ...DEFAULT_OPTIONS, ignore_comments: true } });
+    fireEvent.click(screen.getByLabelText("移動した行を検出して印を付ける"));
+    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, options: { ...DEFAULT_OPTIONS, detect_moves: false } });
+  });
+
+  it("parses the comment prefixes while keeping what was typed", () => {
+    const { onChange } = setup({ ...DEFAULT_SETTINGS, options: { ...DEFAULT_OPTIONS, ignore_comments: true } });
+    const prefixes = screen.getByLabelText("コメントの開始文字列") as HTMLInputElement;
+    expect(prefixes).toBeEnabled();
+    fireEvent.change(prefixes, { target: { value: "--, ; ,rem " } });
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...DEFAULT_SETTINGS,
+      options: { ...DEFAULT_OPTIONS, ignore_comments: true, comment_prefixes: ["--", ";", "rem"] },
+    });
+    expect(prefixes.value).toBe("--, ; ,rem ");
+  });
 });

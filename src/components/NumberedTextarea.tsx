@@ -1,10 +1,15 @@
-import { forwardRef, useImperativeHandle, useRef } from "react";
+import { forwardRef, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import type { RowKind, Segment } from "../types";
 
 export const LINE_HEIGHT = 18;
+/** これを超える行数では、画面に見える範囲の行だけを描画する（巨大なファイルで重くならないように） */
+export const WINDOW_LINES = 2000;
+const OVERSCAN = 30;
 
 export interface LineHighlight {
   kind: RowKind;
+  /** 別の場所から移動した行 */
+  moved?: boolean;
   segments: Segment[];
 }
 
@@ -22,6 +27,10 @@ interface Props {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  /** このペインにフォーカスが移ったとき */
+  onFocusPane?: () => void;
+  /** 検索・置換の対象になっているペイン */
+  active?: boolean;
   /** Cmd/Ctrl+S が押されたとき（このペインにカーソルがある） */
   onSave?: () => void;
   /** ユーザー操作でスクロールされたとき、先頭に見えている行(1始まり) */
@@ -34,7 +43,7 @@ interface Props {
 
 /** 行番号ガターと差分ハイライト層つきテキストエリア（折り返しなしで行とずれないようにする）。 */
 export const NumberedTextarea = forwardRef<EditorHandle, Props>(function NumberedTextarea(
-  { label, value, onChange, onSave, onScrollLine, highlights, findHit },
+  { label, value, onChange, onSave, onScrollLine, highlights, findHit, onFocusPane, active },
   ref,
 ) {
   const gutter = useRef<HTMLDivElement>(null);
@@ -42,6 +51,33 @@ export const NumberedTextarea = forwardRef<EditorHandle, Props>(function Numbere
   const area = useRef<HTMLTextAreaElement>(null);
   const programmatic = useRef<number | null>(null);
   const lines = value.split("\n");
+  const virtual = lines.length > WINDOW_LINES;
+  const [viewport, setViewport] = useState({ top: 0, height: 800 });
+  const ticking = useRef(false);
+  // スクロールのたびに再描画しないよう、フレームごとに1回だけ見える範囲を更新する
+  const updateViewport = () => {
+    if (!virtual || ticking.current) return;
+    ticking.current = true;
+    const apply = () => {
+      ticking.current = false;
+      const ta = area.current;
+      if (ta) setViewport({ top: ta.scrollTop, height: ta.clientHeight || 800 });
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(apply);
+    else apply();
+  };
+  const first = Math.floor(viewport.top / LINE_HEIGHT);
+  const from = virtual ? Math.max(0, first - OVERSCAN) : 0;
+  const to = virtual ? Math.min(lines.length, first + Math.ceil(viewport.height / LINE_HEIGHT) + OVERSCAN) : lines.length;
+  /** 仮想化しているときは、全体の高さを確保した枠の中の正しい位置へ、見える行だけを置く */
+  const windowed = (content: ReactNode) =>
+    virtual ? (
+      <div style={{ height: lines.length * LINE_HEIGHT, position: "relative" }}>
+        <div style={{ position: "absolute", top: from * LINE_HEIGHT, left: 0, right: 0 }}>{content}</div>
+      </div>
+    ) : (
+      content
+    );
 
   useImperativeHandle(ref, () => ({
     replaceText(next) {
@@ -73,21 +109,24 @@ export const NumberedTextarea = forwardRef<EditorHandle, Props>(function Numbere
   }));
 
   return (
-    <div className="numbered">
+    <div className={active ? "numbered active-pane" : "numbered"}>
       <div className="gutter" ref={gutter} aria-hidden="true">
-        {lines.map((_, i) => (
-          <div key={i}>{i + 1}</div>
-        ))}
+        {windowed(
+          lines.slice(from, to).map((_, k) => (
+            <div key={from + k}>{from + k + 1}</div>
+          )),
+        )}
       </div>
       <div className="editor">
         {highlights && (
           <div className="hl-layer" ref={layer} aria-hidden="true">
-            {lines.map((text, i) => {
+            {windowed(lines.slice(from, to).map((text, k) => {
+              const i = from + k;
               const h = highlights.get(i + 1);
               const fresh = h && h.segments.map((s) => s.text).join("") === text;
               const hit = findHit && findHit.line === i + 1 ? findHit : null;
               return (
-                <div key={i} className={fresh ? `hl-line hl-${h.kind}` : "hl-line"}>
+                <div key={i} className={fresh ? `hl-line hl-${h.kind}${h.moved ? " hl-moved" : ""}` : "hl-line"}>
                   {hit ? (
                     <>
                       {text.slice(0, hit.start)}
@@ -101,7 +140,7 @@ export const NumberedTextarea = forwardRef<EditorHandle, Props>(function Numbere
                   )}
                 </div>
               );
-            })}
+            }))}
           </div>
         )}
         <textarea
@@ -110,6 +149,7 @@ export const NumberedTextarea = forwardRef<EditorHandle, Props>(function Numbere
           value={value}
           wrap="off"
           spellCheck={false}
+          onFocus={onFocusPane}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
@@ -124,6 +164,7 @@ export const NumberedTextarea = forwardRef<EditorHandle, Props>(function Numbere
           }}
           onScroll={(e) => {
             const { scrollTop, scrollLeft } = e.currentTarget;
+            updateViewport();
             if (gutter.current) gutter.current.scrollTop = scrollTop;
             if (layer.current) {
               layer.current.scrollTop = scrollTop;

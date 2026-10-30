@@ -17,7 +17,7 @@ vi.mock("../api", () => ({
 }));
 
 import { DEFAULT_OPTIONS } from "../types";
-import { TextCompare } from "./TextCompare";
+import { TextCompare, VIRTUAL_ROWS } from "./TextCompare";
 
 const OPTS = DEFAULT_OPTIONS;
 const SJIS = { name: "Shift_JIS", bom: false };
@@ -298,36 +298,57 @@ describe("TextCompare", () => {
     expect(diffText).not.toHaveBeenCalled();
   });
 
-  describe("search", () => {
+  describe("search and replace (focused pane only)", () => {
     const cell = (n: number, text: string) => ({ line_no: n, segments: [{ text, changed: false }] });
     const srows: DiffRow[] = [
       { kind: "equal", left: cell(1, "Foo one"), right: cell(1, "Foo one") },
       { kind: "replace", left: cell(2, "two foo"), right: cell(2, "two") },
     ];
+    const LEFT = "Foo one\ntwo foo";
+    const RIGHT = "Foo one\ntwo";
     const ssetup = () =>
-      render(<TextCompare leftText={"Foo one\ntwo foo"} rightText={"Foo one\ntwo"} rows={srows} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+      render(<TextCompare leftText={LEFT} rightText={RIGHT} rows={srows} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+    const open = () => fireEvent.keyDown(window, { key: "f", metaKey: true });
+    const value = (label: string) => (screen.getByLabelText(label) as HTMLTextAreaElement).value;
 
-    it("opens with Cmd/Ctrl+F, counts matches, steps through them with Enter and the buttons", () => {
+    it("searches the left pane by default, counts matches and steps through them", () => {
       const { container } = ssetup();
       expect(screen.queryByLabelText("検索")).toBeNull();
-      fireEvent.keyDown(window, { key: "f", metaKey: true });
+      open();
+      expect(screen.getByText("対象: 左ペイン")).toBeInTheDocument();
       const input = screen.getByLabelText("検索");
       fireEvent.change(input, { target: { value: "foo" } });
-      expect(screen.getByText("1 / 3")).toBeInTheDocument();
+      expect(screen.getByText("1 / 2")).toBeInTheDocument(); // 右ペインの "Foo one" は数えない… 左は2か所
       expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-left-line", "1");
       fireEvent.keyDown(input, { key: "Enter" });
-      expect(screen.getByText("2 / 3")).toBeInTheDocument();
+      expect(screen.getByText("2 / 2")).toBeInTheDocument();
       expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-left-line", "2");
       fireEvent.click(screen.getByRole("button", { name: "次の一致" }));
-      expect(screen.getByText("3 / 3")).toBeInTheDocument();
-      expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-right-line", "1");
-      fireEvent.click(screen.getByRole("button", { name: "次の一致" }));
-      expect(screen.getByText("1 / 3")).toBeInTheDocument(); // 一巡
+      expect(screen.getByText("1 / 2")).toBeInTheDocument(); // 一巡
       fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
-      expect(screen.getByText("3 / 3")).toBeInTheDocument();
+      expect(screen.getByText("2 / 2")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "前の一致" }));
-      expect(screen.getByText("2 / 3")).toBeInTheDocument();
+      expect(screen.getByText("1 / 2")).toBeInTheDocument();
       fireEvent.keyDown(input, { key: "a" });
+    });
+
+    it("follows the pane that was clicked (view mode) or focused (edit mode)", () => {
+      const { container } = ssetup();
+      open();
+      fireEvent.change(screen.getByLabelText("検索"), { target: { value: "foo" } });
+      expect(screen.getByText("1 / 2")).toBeInTheDocument();
+      fireEvent.mouseDown(container.querySelector('td[data-right-line="1"]')!);
+      expect(screen.getByText("対象: 右ペイン")).toBeInTheDocument();
+      expect(screen.getByText("1 / 1")).toBeInTheDocument(); // 右には "Foo one" の1か所だけ
+      expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-right-line", "1");
+      fireEvent.mouseDown(container.querySelector('td[data-left-line="1"]')!);
+      expect(screen.getByText("対象: 左ペイン")).toBeInTheDocument();
+      fireEvent.click(screen.getByText("編集"));
+      fireEvent.focus(screen.getByLabelText("右のテキスト"));
+      expect(screen.getByText("対象: 右ペイン")).toBeInTheDocument();
+      expect(container.querySelectorAll(".numbered.active-pane")).toHaveLength(1);
+      fireEvent.focus(screen.getByLabelText("左のテキスト"));
+      expect(screen.getByText("対象: 左ペイン")).toBeInTheDocument();
     });
 
     it("says when nothing is found, and closes with Escape or the button", () => {
@@ -339,20 +360,77 @@ describe("TextCompare", () => {
       fireEvent.click(screen.getByRole("button", { name: "次の一致" }));
       fireEvent.keyDown(window, { key: "Escape" });
       expect(screen.queryByLabelText("検索")).toBeNull();
-      fireEvent.keyDown(window, { key: "Escape" }); // 閉じているときは何もしない
-      fireEvent.keyDown(window, { key: "f", metaKey: true });
+      fireEvent.keyDown(window, { key: "Escape" });
+      open();
       fireEvent.click(screen.getByRole("button", { name: "検索を閉じる" }));
       expect(screen.queryByLabelText("検索")).toBeNull();
     });
 
-    it("marks the match inside the editor in edit mode and survives an empty query", () => {
+    it("marks the match inside the focused editor and survives an empty query", () => {
       const { container } = ssetup();
       fireEvent.click(screen.getByText("編集"));
-      fireEvent.keyDown(window, { key: "f", metaKey: true });
+      open();
       fireEvent.change(screen.getByLabelText("検索"), { target: { value: "two" } });
       expect(container.querySelector("mark.find-hit")!.textContent).toBe("two");
       fireEvent.change(screen.getByLabelText("検索"), { target: { value: "" } });
       expect(container.querySelector("mark.find-hit")).toBeNull();
+    });
+
+    it("offers replace only in edit mode", () => {
+      ssetup();
+      open();
+      fireEvent.change(screen.getByLabelText("検索"), { target: { value: "two" } });
+      expect(screen.queryByLabelText("置換後")).toBeNull();
+      expect(screen.queryByText("すべて置換")).toBeNull();
+      fireEvent.click(screen.getByText("編集"));
+      expect(screen.getByLabelText("置換後")).toBeInTheDocument();
+      fireEvent.click(screen.getByText("表示に戻る"));
+      expect(screen.queryByLabelText("置換後")).toBeNull();
+    });
+
+    describe("replace", () => {
+      beforeEach(installExecCommand);
+      const prepare = (query: string) => {
+        ssetup();
+        fireEvent.click(screen.getByText("編集"));
+        open();
+        fireEvent.change(screen.getByLabelText("検索"), { target: { value: query } });
+      };
+
+      it("replaces the current match in the focused pane only, through insertText (undoable)", () => {
+        prepare("foo");
+        fireEvent.change(screen.getByLabelText("置換後"), { target: { value: "BAR" } });
+        fireEvent.click(screen.getByText("置換"));
+        expect(document.execCommand).toHaveBeenCalledWith("insertText", false, "BAR");
+        expect(value("左のテキスト")).toBe("BAR one\ntwo foo");
+        expect(value("右のテキスト")).toBe(RIGHT); // 右は変わらない
+        expect(screen.getByText("1 / 1")).toBeInTheDocument(); // 次の一致へ進む
+        fireEvent.keyDown(screen.getByLabelText("置換後"), { key: "Enter" });
+        expect(value("左のテキスト")).toBe("BAR one\ntwo BAR");
+        expect(screen.getByText("見つかりません")).toBeInTheDocument();
+        expect(screen.getByText("置換")).toBeDisabled();
+      });
+
+      it("replaces every match in the focused pane in one step", () => {
+        prepare("foo");
+        fireEvent.focus(screen.getByLabelText("右のテキスト"));
+        fireEvent.click(screen.getByText("すべて置換")); // 置換後が空 = 削除
+        expect(value("右のテキスト")).toBe(" one\ntwo");
+        expect(value("左のテキスト")).toBe(LEFT);
+        fireEvent.focus(screen.getByLabelText("左のテキスト"));
+        fireEvent.change(screen.getByLabelText("置換後"), { target: { value: "X" } });
+        fireEvent.click(screen.getByText("すべて置換"));
+        expect(value("左のテキスト")).toBe("X one\ntwo X");
+        expect(screen.getByText("すべて置換")).toBeDisabled();
+      });
+
+      it("does nothing when there is no match", () => {
+        prepare("zzz");
+        fireEvent.click(screen.getByText("置換"));
+        fireEvent.click(screen.getByText("すべて置換"));
+        expect(document.execCommand).not.toHaveBeenCalled();
+        expect(value("左のテキスト")).toBe(LEFT);
+      });
     });
 
     it("is not available for a single opened file", () => {
@@ -421,5 +499,96 @@ describe("TextCompare", () => {
     unmount();
     render(<TextCompare leftText="a" rightText="b" rows={[]} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
     expect(screen.queryByText("3ウェイ…")).toBeNull();
+  });
+
+  it("marks moved rows in the table, the editor and the difference map", () => {
+    const cell = (n: number, text: string) => ({ line_no: n, segments: [{ text, changed: true }] });
+    const r: DiffRow[] = [
+      { kind: "equal", left: { line_no: 1, segments: [{ text: "keep", changed: false }] }, right: { line_no: 1, segments: [{ text: "keep", changed: false }] } },
+      { kind: "delete", left: cell(2, "moved text"), right: null, moved: true },
+      { kind: "insert", left: null, right: cell(2, "moved text"), moved: true },
+    ];
+    const { container } = render(<TextCompare leftText={"keep\nmoved text"} rightText={"keep\nmoved text"} rows={r} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+    expect(container.querySelectorAll("tr.row-moved")).toHaveLength(2);
+    expect(container.querySelector("tr.row-moved")).toHaveAttribute("title", "別の場所から移動した行");
+    expect(container.querySelector(".hl-moved")).not.toBeNull();
+    expect(container.querySelector(".ov-moved")).not.toBeNull();
+  });
+
+  describe("very large diffs", () => {
+    const cell = (n: number, text: string) => ({ line_no: n, segments: [{ text, changed: false }] });
+    const N = VIRTUAL_ROWS + 800;
+    const many: DiffRow[] = Array.from({ length: N }, (_, i) =>
+      i === 2500
+        ? { kind: "replace", left: cell(i + 1, `row ${i + 1}`), right: cell(i + 1, `row ${i + 1} edited`) }
+        : { kind: "equal", left: cell(i + 1, `row ${i + 1}`), right: cell(i + 1, `row ${i + 1}`) },
+    );
+    const text = many.map((r) => r.left!.segments[0].text).join("\n");
+    // jsdom は常に位置 0 を返すので、表の位置が親のスクロールに連動するようにする（実際のブラウザと同じ挙動）
+    beforeEach(() => {
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        const scrolled = this.tagName === "TABLE" ? (this.closest("main") as HTMLElement | null)?.scrollTop ?? 0 : 0;
+        return { top: -scrolled, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: -scrolled, toJSON: () => ({}) };
+      });
+    });
+    afterEach(() => vi.restoreAllMocks());
+    const setup = () => {
+      const view = render(
+        <main>
+          <TextCompare leftText={text} rightText={text} rows={many} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />
+        </main>,
+      );
+      const main = view.container.querySelector("main") as HTMLElement;
+      Object.defineProperty(main, "clientHeight", { value: 600, configurable: true });
+      return { ...view, main };
+    };
+    const bodyRows = (c: HTMLElement) => c.querySelectorAll("table.diff-table tbody tr:not([aria-hidden])").length;
+    const tableText = (c: HTMLElement) => c.querySelector("table.diff-table")!.textContent!;
+
+    it("renders only the rows around the viewport and follows the scroll", async () => {
+      const { container, main } = setup();
+      expect(container.querySelector("table.diff-table")).toHaveClass("virtual");
+      expect(bodyRows(container)).toBeLessThan(250);
+      expect(tableText(container)).toContain("row 1");
+      expect(tableText(container)).not.toContain("row 3000 ");
+      fireEvent.scroll(main, { target: { scrollTop: 1500 * 18 } });
+      await waitFor(() => expect(tableText(container)).toContain("row 1501"));
+      expect(tableText(container)).not.toContain("row 1 ");
+      // 上下は、描画しない行の高さぶんの空白で埋める
+      const spacers = container.querySelectorAll('tr[aria-hidden="true"]');
+      expect(spacers.length).toBe(2);
+      expect((spacers[0] as HTMLElement).style.height).toBe(`${(1500 - 40) * 18}px`);
+      fireEvent.scroll(main, { target: { scrollTop: 0 } });
+      await waitFor(() => expect(container.querySelectorAll('tr[aria-hidden="true"]').length).toBe(1));
+    });
+
+    it("jumps to a far-away difference by scrolling the container", async () => {
+      const { container, main } = setup();
+      fireEvent.click(screen.getByRole("button", { name: "次の差分" }));
+      expect(main.scrollTop).toBe(2500 * 18 - 300);
+      fireEvent.scroll(main);
+      await waitFor(() => expect(tableText(container)).toContain("row 2501 edited"));
+    });
+
+    it("scrolls to a search hit that is not currently rendered", () => {
+      const { main } = setup();
+      fireEvent.keyDown(window, { key: "f", metaKey: true });
+      fireEvent.change(screen.getByLabelText("検索"), { target: { value: "row 2400" } });
+      expect(main.scrollTop).toBe(2399 * 18 - 300);
+    });
+
+    it("stops listening for scroll when it unmounts", () => {
+      const { unmount, main } = setup();
+      const remove = vi.spyOn(main, "removeEventListener");
+      unmount();
+      expect(remove).toHaveBeenCalledWith("scroll", expect.any(Function));
+    });
+
+    it("renders everything for a small diff and does not wait for animation frames when they are unavailable", () => {
+      const small = many.slice(0, 50);
+      const { container } = render(<TextCompare leftText="a" rightText="a" rows={small} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+      expect(container.querySelector("table.diff-table")).not.toHaveClass("virtual");
+      expect(container.querySelectorAll("table.diff-table tbody tr")).toHaveLength(50);
+    });
   });
 });

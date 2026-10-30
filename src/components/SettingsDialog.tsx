@@ -23,10 +23,11 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const [prefixText, setPrefixText] = useState(settings.options.comment_prefixes.join(", "));
   const [excludeText, setExcludeText] = useState(settings.options.exclude.join("\n"));
   const update = (patch: Partial<DiffOptions>) => onChange({ ...settings, options: { ...settings.options, ...patch } });
 
-  const toggle = (key: "ignore_whitespace" | "ignore_case") =>
+  const toggle = (key: "ignore_whitespace" | "ignore_case" | "ignore_blank_lines" | "ignore_comments" | "detect_moves") =>
     onChange({ ...settings, options: { ...settings.options, [key]: !settings.options[key] } });
 
   return (
@@ -51,6 +52,35 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
           <label>
             <input type="checkbox" checked={settings.options.ignore_case} onChange={() => toggle("ignore_case")} />
             大文字小文字の違い
+          </label>
+          <label>
+            <input type="checkbox" checked={settings.options.ignore_blank_lines} onChange={() => toggle("ignore_blank_lines")} />
+            空行の追加・削除
+          </label>
+          <label>
+            <input type="checkbox" checked={settings.options.ignore_comments} onChange={() => toggle("ignore_comments")} />
+            コメントの違い
+          </label>
+          <label className="indent">
+            コメントの開始文字列
+            <input
+              type="text"
+              aria-label="コメントの開始文字列"
+              placeholder="//, #"
+              value={prefixText}
+              disabled={!settings.options.ignore_comments}
+              onChange={(e) => {
+                setPrefixText(e.target.value);
+                update({ comment_prefixes: parseExclude(e.target.value) });
+              }}
+            />
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>表示</legend>
+          <label>
+            <input type="checkbox" checked={settings.options.detect_moves} onChange={() => toggle("detect_moves")} />
+            移動した行を検出して印を付ける
           </label>
         </fieldset>
         <fieldset>

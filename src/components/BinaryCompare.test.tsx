@@ -21,10 +21,19 @@ describe("BinaryCompare", () => {
     const rows: BinaryRow[] = Array.from({ length: 501 }, (_, i) => ({
       offset: i * 16, left: [cell("41", "A")], right: [cell("41", "A")],
     }));
-    render(<BinaryCompare rows={rows} />);
-    expect(screen.getAllByRole("row")).toHaveLength(500);
+    const { container } = render(<BinaryCompare rows={rows} />);
+    const count = () => container.querySelectorAll("tbody tr").length; // role クエリは行数が多いと非常に遅い
+    expect(count()).toBe(500);
     fireEvent.click(screen.getByText(/もっと表示/));
-    expect(screen.getAllByRole("row")).toHaveLength(501);
+    expect(count()).toBe(501);
     expect(screen.queryByText(/もっと表示/)).toBeNull();
+  });
+
+  it("tells the user when only the beginning of a huge file is shown", () => {
+    const rows: BinaryRow[] = Array.from({ length: 3 }, (_, i) => ({ offset: i * 16, left: [cell("41", "A")], right: [cell("41", "A")] }));
+    const { rerender } = render(<BinaryCompare rows={rows} truncated />);
+    expect(screen.getByText("大きいため、先頭 48 バイトのみ表示しています")).toBeInTheDocument();
+    rerender(<BinaryCompare rows={rows} />);
+    expect(screen.queryByText(/先頭/)).toBeNull();
   });
 });

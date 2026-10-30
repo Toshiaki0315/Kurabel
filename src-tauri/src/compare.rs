@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 
 /// 読み込みを許可するファイルサイズの上限（メモリ・描画負荷対策）
-pub const MAX_FILE_SIZE: u64 = 4 * 1024 * 1024;
+pub const MAX_FILE_SIZE: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -35,6 +35,8 @@ pub enum Comparison {
     Binary {
         left_size: u64,
         right_size: u64,
+        /// 行数の上限を超えたため、先頭部分だけを返している
+        truncated: bool,
         rows: Vec<BinaryRow>,
     },
     Directory {
@@ -103,6 +105,7 @@ pub fn view_single(path: &Path, left_side: bool, options: &DiffOptions, encoding
         return Ok(Comparison::Binary {
             left_size: if left_side { size } else { other },
             right_size: if left_side { other } else { size },
+            truncated: binary::is_truncated(data.len(), 0),
             rows: binary::dump_single(&data, left_side),
         });
     };
@@ -215,6 +218,7 @@ fn compare_files(left: &Path, right: &Path, mode: DiffMode, options: &DiffOption
     Ok(Comparison::Binary {
         left_size: l.len() as u64,
         right_size: r.len() as u64,
+        truncated: binary::is_truncated(l.len(), r.len()),
         rows: binary::dump_diff(&l, &r),
     })
 }
@@ -250,7 +254,7 @@ mod tests {
         let f = d.path().join("a.bin");
         fs::write(&f, [0u8, 1, 2]).unwrap();
         match view_single(&f, true, &DiffOptions::default(), None).unwrap() {
-            Comparison::Binary { left_size, right_size, rows } => {
+            Comparison::Binary { left_size, right_size, rows, .. } => {
                 assert_eq!((left_size, right_size), (3, 0));
                 assert!(rows[0].right.is_empty());
             }
@@ -389,7 +393,7 @@ mod tests {
         fs::write(&a, [0u8, 1, 2]).unwrap();
         fs::write(&b, "text").unwrap();
         match compare_paths(&a, &b, DiffMode::Line, &DiffOptions::default(), &EncodingChoice::default()).unwrap() {
-            Comparison::Binary { left_size, right_size, rows } => {
+            Comparison::Binary { left_size, right_size, rows, .. } => {
                 assert_eq!((left_size, right_size), (3, 4));
                 assert_eq!(rows.len(), 1);
             }

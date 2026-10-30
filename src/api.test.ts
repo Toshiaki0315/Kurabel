@@ -19,6 +19,7 @@ import {
   createText,
   deleteEntry,
   diffText,
+  expandRows,
   initialPaths,
   makePatch,
   merge3Files,
@@ -111,5 +112,31 @@ describe("api", () => {
     save.mockResolvedValue("/chosen");
     expect(await pickSavePath("a.txt")).toBe("/chosen");
     expect(save).toHaveBeenLastCalledWith({ defaultPath: "a.txt" });
+  });
+
+  describe("expandRows", () => {
+    const seg = (text: string) => [{ text, changed: false }];
+    it("fills in the right text that the backend omits for identical lines", () => {
+      const rows = [
+        { kind: "equal" as const, left: { line_no: 1, segments: seg("same") }, right: { line_no: 1, segments: [] } },
+        { kind: "equal" as const, left: { line_no: 2, segments: seg("Hello") }, right: { line_no: 2, segments: seg("hello") } },
+        { kind: "insert" as const, left: null, right: { line_no: 3, segments: seg("new") } },
+      ];
+      const out = expandRows(rows);
+      expect(out[0].right!.segments).toBe(rows[0].left!.segments); // 参照を共有（メモリを増やさない）
+      expect(out[1].right!.segments[0].text).toBe("hello"); // 実際に違うものはそのまま
+      expect(out[2].right!.segments[0].text).toBe("new");
+    });
+
+    it("is applied to comparison and re-diff results", async () => {
+      const row = () => ({ kind: "equal", left: { line_no: 1, segments: seg("x") }, right: { line_no: 1, segments: [] } });
+      invoke.mockResolvedValueOnce({ kind: "text", rows: [row()] });
+      const c = await comparePaths("/a", "/b", "line", DEFAULT_OPTIONS);
+      expect(c.kind === "text" && c.rows[0].right!.segments[0].text).toBe("x");
+      invoke.mockResolvedValueOnce([row()]);
+      expect((await diffText("a", "a", "line", DEFAULT_OPTIONS))[0].right!.segments[0].text).toBe("x");
+      invoke.mockResolvedValueOnce({ kind: "directory", entries: [] });
+      expect((await comparePaths("/a", "/b", "line", DEFAULT_OPTIONS)).kind).toBe("directory");
+    });
   });
 });

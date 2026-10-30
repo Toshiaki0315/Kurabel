@@ -3,7 +3,8 @@
 //! 両側が重なって異なる内容にした箇所を「競合」として返す。
 
 use serde::Serialize;
-use similar::{capture_diff_slices, Algorithm, DiffOp};
+use similar::{capture_diff_slices_deadline, Algorithm, DiffOp};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -32,7 +33,7 @@ fn strings(lines: &[&str]) -> Vec<String> {
 }
 
 fn hunks(base: &[&str], other: &[&str]) -> Vec<Hunk> {
-    capture_diff_slices(Algorithm::Myers, base, other)
+    capture_diff_slices_deadline(Algorithm::Myers, base, other, Some(Instant::now() + Duration::from_secs(10)))
         .into_iter()
         .filter_map(|op| match op {
             DiffOp::Equal { .. } => None,

@@ -26,6 +26,12 @@ export function loadSettings(): Settings {
       options: {
         ignore_whitespace: o?.ignore_whitespace === true,
         ignore_case: o?.ignore_case === true,
+        ignore_blank_lines: o?.ignore_blank_lines === true,
+        ignore_comments: o?.ignore_comments === true,
+        comment_prefixes: Array.isArray(o?.comment_prefixes)
+          ? o.comment_prefixes.filter((x: unknown): x is string => typeof x === "string")
+          : DEFAULT_OPTIONS.comment_prefixes,
+        detect_moves: o?.detect_moves !== false,
         exclude: Array.isArray(o?.exclude) ? o.exclude.filter((x: unknown): x is string => typeof x === "string") : [],
         recursive: o?.recursive !== false,
         quick: o?.quick === true,
