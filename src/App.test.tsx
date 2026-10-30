@@ -9,6 +9,7 @@ const confirmAction = vi.fn();
 const initialPaths = vi.fn();
 const copyEntry = vi.fn();
 const deleteEntry = vi.fn();
+const merge3Files = vi.fn();
 let closeGuard: () => Promise<boolean>;
 let menuOpenSettings: () => void;
 let dropHandler: (paths: string[], side: "left" | "right") => void;
@@ -21,6 +22,9 @@ vi.mock("./api", () => ({
   initialPaths: (...a: unknown[]) => initialPaths(...a),
   copyEntry: (...a: unknown[]) => copyEntry(...a),
   deleteEntry: (...a: unknown[]) => deleteEntry(...a),
+  merge3Files: (...a: unknown[]) => merge3Files(...a),
+  createText: vi.fn(),
+  pickSavePath: vi.fn(),
   saveText: vi.fn().mockResolvedValue(undefined),
   diffText: vi.fn().mockResolvedValue([]),
 }));
@@ -81,6 +85,7 @@ describe("App", () => {
     confirmAction.mockReset();
     copyEntry.mockReset();
     deleteEntry.mockReset();
+    merge3Files.mockReset();
     initialPaths.mockReset();
     initialPaths.mockResolvedValue([]);
     localStorage.clear();
@@ -533,6 +538,90 @@ describe("App", () => {
       fireEvent.click(screen.getByLabelText("サブフォルダを含める"));
       await new Promise((r) => setTimeout(r, 450));
       expect(comparePaths).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("3-way merge", () => {
+    const utf8 = { name: "UTF-8", bom: false };
+    const merge = {
+      chunks: [
+        { kind: "stable", lines: ["a"] },
+        { kind: "conflict", base: ["b"], left: ["L"], right: ["R"] },
+      ],
+      left_encoding: utf8,
+      base_encoding: utf8,
+      right_encoding: utf8,
+      eol: "\n",
+      trailing_newline: true,
+    };
+    async function openTwo() {
+      comparePaths.mockImplementation(async () => ({ ...textResult }));
+      render(<App />);
+      await choose("左", "/l.txt");
+      await choose("右", "/r.txt");
+      await screen.findByText("編集");
+    }
+
+    it("asks for the base file, shows the merge screen and returns to the comparison (reloaded)", async () => {
+      merge3Files.mockResolvedValue(merge);
+      await openTwo();
+      pickPath.mockResolvedValueOnce("/base.txt");
+      fireEvent.click(screen.getByText("3ウェイ…"));
+      await waitFor(() => expect(merge3Files).toHaveBeenCalledWith("/base.txt", "/l.txt", "/r.txt"));
+      expect(await screen.findByLabelText("マージ結果")).toBeInTheDocument();
+      expect(screen.getByText("base.txt")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "左を選択" })).toBeNull(); // 2ウェイ用のヘッダーは隠す
+      comparePaths.mockClear();
+      fireEvent.click(screen.getByText("← 2ウェイ比較に戻る"));
+      expect(await screen.findByText("編集")).toBeInTheDocument();
+      expect(comparePaths).toHaveBeenCalledWith("/l.txt", "/r.txt", "line", OPTS, AUTO_ENCODING);
+      expect(screen.getByRole("button", { name: "左を選択" })).toBeInTheDocument();
+    });
+
+    it("does nothing when the base file dialog is cancelled, and shows errors", async () => {
+      await openTwo();
+      pickPath.mockResolvedValueOnce(null);
+      fireEvent.click(screen.getByText("3ウェイ…"));
+      await waitFor(() => expect(pickPath).toHaveBeenCalled());
+      expect(merge3Files).not.toHaveBeenCalled();
+      pickPath.mockResolvedValueOnce("/bin.dat");
+      merge3Files.mockRejectedValueOnce("テキストファイルではありません");
+      fireEvent.click(screen.getByText("3ウェイ…"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("テキストファイルではありません");
+      expect(screen.queryByLabelText("マージ結果")).toBeNull();
+    });
+
+    it("guards leaving a merge with unsaved changes", async () => {
+      merge3Files.mockResolvedValue(merge);
+      await openTwo();
+      pickPath.mockResolvedValueOnce("/base.txt");
+      fireEvent.click(screen.getByText("3ウェイ…"));
+      fireEvent.click(await screen.findByRole("button", { name: "競合1: 左を採用" }));
+      confirmDiscard.mockResolvedValueOnce(false);
+      fireEvent.click(screen.getByText("← 2ウェイ比較に戻る"));
+      await waitFor(() => expect(confirmDiscard).toHaveBeenCalled());
+      expect(screen.getByLabelText("マージ結果")).toBeInTheDocument();
+      confirmDiscard.mockResolvedValueOnce(false);
+      expect(await closeGuard()).toBe(false); // ウィンドウを閉じる操作も確認される
+      confirmDiscard.mockResolvedValueOnce(true);
+      fireEvent.click(screen.getByText("← 2ウェイ比較に戻る"));
+      expect(await screen.findByText("編集")).toBeInTheDocument();
+    });
+
+    it("is not offered while only one file is open, and a dropped file closes the merge screen", async () => {
+      merge3Files.mockResolvedValue(merge);
+      comparePaths.mockImplementation(async () => ({ ...textResult }));
+      render(<App />);
+      await act(async () => dropHandler(["/only.txt"], "left"));
+      await screen.findByLabelText("左の文字コード");
+      expect(screen.queryByText("3ウェイ…")).toBeNull();
+      await act(async () => dropHandler(["/a.txt", "/b.txt"], "left"));
+      await screen.findByText("3ウェイ…");
+      pickPath.mockResolvedValueOnce("/base.txt");
+      fireEvent.click(screen.getByText("3ウェイ…"));
+      await screen.findByLabelText("マージ結果");
+      await act(async () => dropHandler(["/c.txt", "/d.txt"], "left"));
+      await waitFor(() => expect(screen.queryByLabelText("マージ結果")).toBeNull());
     });
   });
 });

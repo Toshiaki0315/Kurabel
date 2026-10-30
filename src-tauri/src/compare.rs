@@ -1,6 +1,7 @@
 //! パスの判定と、種別に応じた比較の振り分け。
 
 use crate::binary::{self, BinaryRow};
+use crate::merge3::{self, MergeChunk};
 use crate::textcodec::{self, Decoded, EncodingChoice, TextEncoding};
 use crate::dirdiff::{self, DirEntry};
 use crate::textdiff::{self, DiffMode, DiffOptions, DiffRow};
@@ -118,6 +119,58 @@ pub fn view_single(path: &Path, left_side: bool, options: &DiffOptions, encoding
         right_eol: r.2,
         rows,
     })
+}
+
+/// 3ウェイマージの入力と結果。
+#[derive(Debug, Serialize)]
+pub struct Merge3 {
+    pub chunks: Vec<MergeChunk>,
+    pub left_encoding: TextEncoding,
+    pub base_encoding: TextEncoding,
+    pub right_encoding: TextEncoding,
+    /// 結果を組み立てるときの改行（左の改行コードに合わせる）: "\n" または "\r\n"
+    pub eol: String,
+    /// 結果の末尾に改行を付けるか（左に合わせる）
+    pub trailing_newline: bool,
+}
+
+fn read_text(path: &Path) -> Result<textcodec::Decoded, String> {
+    if classify(path)? != PathKind::File {
+        return Err(format!("{}: ファイルではありません", path.display()));
+    }
+    textcodec::decode(&read_limited(path)?).ok_or_else(|| format!("{}: テキストファイルではありません", path.display()))
+}
+
+pub fn merge3_files(base: &Path, left: &Path, right: &Path) -> Result<Merge3, String> {
+    let (b, l, r) = (read_text(base)?, read_text(left)?, read_text(right)?);
+    let reference = if l.text.is_empty() { &r.text } else { &l.text };
+    Ok(Merge3 {
+        chunks: merge3::merge3(&b.text, &l.text, &r.text),
+        eol: if reference.contains("\r\n") { "\r\n" } else { "\n" }.to_string(),
+        trailing_newline: reference.ends_with('\n'),
+        left_encoding: l.encoding,
+        base_encoding: b.encoding,
+        right_encoding: r.encoding,
+    })
+}
+
+/// 新しいファイルとして書き込む。既存のファイルは上書きしない。
+pub fn create_text(path: &Path, content: &str, encoding: &TextEncoding) -> Result<(), String> {
+    use std::io::Write;
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    if classify(parent)? != PathKind::Directory {
+        return Err(format!("{}: 保存先のフォルダがありません", parent.display()));
+    }
+    let bytes = textcodec::encode(content, encoding)?;
+    if bytes.len() as u64 > MAX_FILE_SIZE {
+        return Err(format!("内容が上限 ({} MB) を超えています", MAX_FILE_SIZE / 1024 / 1024));
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    file.write_all(&bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// 手動指定があればその文字コードで、なければ自動判定で読み込む。None はバイナリ。
@@ -418,5 +471,55 @@ mod tests {
             Comparison::Directory { entries } => assert_eq!(entries.len(), 1),
             _ => panic!("expected directory"),
         }
+    }
+
+    #[test]
+    fn merges_three_files_and_reports_eol_and_encodings() {
+        let d = tempfile::tempdir().unwrap();
+        let (b, l, r) = (d.path().join("b.txt"), d.path().join("l.txt"), d.path().join("r.txt"));
+        fs::write(&b, "a\nb\nc\nd\n").unwrap();
+        fs::write(&l, "a\r\nB\r\nc\r\nd\r\n").unwrap();
+        fs::write(&r, "a\nb\nc\nD\n").unwrap();
+        let m = merge3_files(&b, &l, &r).unwrap();
+        assert_eq!(m.eol, "\r\n");
+        assert!(m.trailing_newline);
+        assert_eq!(m.left_encoding.name, "UTF-8");
+        assert_eq!(m.chunks.len(), 4);
+        assert!(matches!(m.chunks[1], MergeChunk::Left { .. }));
+        assert!(matches!(m.chunks[3], MergeChunk::Right { .. }));
+    }
+
+    #[test]
+    fn merge3_rejects_binary_and_non_files_and_uses_the_right_side_when_left_is_empty() {
+        let d = tempfile::tempdir().unwrap();
+        let (t, bin) = (d.path().join("t.txt"), d.path().join("x.bin"));
+        fs::write(&t, "a\n").unwrap();
+        fs::write(&bin, [0u8, 1]).unwrap();
+        assert!(merge3_files(&t, &t, &bin).unwrap_err().contains("テキストファイルではありません"));
+        assert!(merge3_files(d.path(), &t, &t).is_err());
+        let e = d.path().join("empty.txt");
+        let r = d.path().join("crlf.txt");
+        fs::write(&e, "").unwrap();
+        fs::write(&r, "x\r\n").unwrap();
+        let m = merge3_files(&t, &e, &r).unwrap();
+        assert_eq!((m.eol.as_str(), m.trailing_newline), ("\r\n", true));
+        assert!(merge3_files(&t, &t, &d.path().join("missing")).is_err());
+    }
+
+    #[test]
+    fn creates_new_files_but_never_overwrites() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("new.txt");
+        let sjis = TextEncoding { name: "Shift_JIS".into(), bom: false };
+        create_text(&f, "あいう", &sjis).unwrap();
+        assert_eq!(fs::read(&f).unwrap(), encoding_rs::SHIFT_JIS.encode("あいう").0.to_vec());
+        assert!(create_text(&f, "x", &utf8()).unwrap_err().contains("exists") || create_text(&f, "x", &utf8()).is_err());
+        assert_eq!(fs::read(&f).unwrap(), encoding_rs::SHIFT_JIS.encode("あいう").0.to_vec());
+        assert!(create_text(&d.path().join("missing/x.txt"), "x", &utf8()).is_err());
+        assert!(create_text(&d.path().join("emoji.txt"), "😀", &sjis).is_err());
+        assert!(!d.path().join("emoji.txt").exists());
+        let big = "a".repeat(MAX_FILE_SIZE as usize + 1);
+        assert!(create_text(&d.path().join("big.txt"), &big, &utf8()).is_err());
+        assert!(!d.path().join("big.txt").exists());
     }
 }

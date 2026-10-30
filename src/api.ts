@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
-import { AUTO_ENCODING, type Comparison, type DiffMode, type DiffOptions, type DiffRow, type EncodingChoice, type TextEncoding } from "./types";
+import { AUTO_ENCODING, type Comparison, type DiffMode, type DiffOptions, type DiffRow, type EncodingChoice, type Merge3, type TextEncoding } from "./types";
 
 /** 片方が null のときは、もう片方だけをそのまま表示する。 */
 export function comparePaths(
@@ -71,4 +71,18 @@ export async function pickPatchPath(defaultName: string): Promise<string | null>
 /** 取り消せない操作の前の確認 */
 export function confirmAction(message: string, okLabel: string): Promise<boolean> {
   return confirm(message, { title: "クラベル", kind: "warning", okLabel, cancelLabel: "キャンセル" });
+}
+
+export function merge3Files(base: string, left: string, right: string): Promise<Merge3> {
+  return invoke<Merge3>("merge3", { base, left, right });
+}
+
+/** 新しいファイルとして保存する（既存のファイルは上書きされない） */
+export function createText(path: string, content: string, encoding: TextEncoding): Promise<void> {
+  return invoke("create_text", { path, content, encoding });
+}
+
+/** 名前を付けて保存する場所をダイアログで選ぶ。キャンセル時は null。 */
+export async function pickSavePath(defaultName: string): Promise<string | null> {
+  return save({ defaultPath: defaultName });
 }

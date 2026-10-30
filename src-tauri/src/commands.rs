@@ -49,6 +49,16 @@ pub fn initial_paths() -> Vec<String> {
 }
 
 #[tauri::command]
+pub fn merge3(base: String, left: String, right: String) -> Result<compare::Merge3, String> {
+    compare::merge3_files(base.as_ref(), left.as_ref(), right.as_ref())
+}
+
+#[tauri::command]
+pub fn create_text(path: String, content: String, encoding: TextEncoding) -> Result<(), String> {
+    compare::create_text(path.as_ref(), &content, &encoding)
+}
+
+#[tauri::command]
 pub fn path_kind(path: String) -> Result<PathKind, String> {
     compare::classify(path.as_ref())
 }
@@ -124,5 +134,22 @@ mod tests {
     #[test]
     fn compare_paths_reports_missing() {
         assert!(compare_paths(Some("/nonexistent/x".into()), Some("/nonexistent/y".into()), DiffMode::Line, DiffOptions::default(), EncodingChoice::default()).is_err());
+    }
+
+    #[test]
+    fn merge3_and_create_text_wrappers() {
+        let d = tempfile::tempdir().unwrap();
+        let p = |n: &str, c: &str| {
+            let f = d.path().join(n);
+            std::fs::write(&f, c).unwrap();
+            f.to_string_lossy().into_owned()
+        };
+        let (b, l, r) = (p("b", "a\n"), p("l", "a\nL\n"), p("r", "a\n"));
+        assert_eq!(merge3(b.clone(), l, r).unwrap().chunks.len(), 2);
+        assert!(merge3(b, "/nonexistent".into(), "/nonexistent".into()).is_err());
+        let out = d.path().join("out.txt").to_string_lossy().into_owned();
+        let enc = TextEncoding { name: "UTF-8".into(), bom: false };
+        create_text(out.clone(), "x".into(), enc.clone()).unwrap();
+        assert!(create_text(out, "y".into(), enc).is_err());
     }
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { comparePaths, confirmAction, confirmDiscard, copyEntry, deleteEntry, initialPaths, pathKind, pickPath } from "./api";
+import { comparePaths, confirmAction, confirmDiscard, copyEntry, deleteEntry, initialPaths, merge3Files, pathKind, pickPath } from "./api";
 import { BinaryCompare } from "./components/BinaryCompare";
 import { DirCompare } from "./components/DirCompare";
 import { PathPicker } from "./components/PathPicker";
@@ -10,10 +10,11 @@ import { joinPath } from "./lib/path";
 import { addRecent, baseName, loadRecent } from "./lib/recent";
 import { useCloseGuard } from "./lib/useCloseGuard";
 import { useDragDrop } from "./lib/useDragDrop";
+import { ThreeWay } from "./components/ThreeWay";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { loadSettings, saveSettings } from "./lib/settings";
 import { useTauriEvent } from "./lib/useTauriEvent";
-import { AUTO_ENCODING, type Comparison, type DiffMode, type DiffOptions, type EncodingChoice, type TextEncoding } from "./types";
+import { AUTO_ENCODING, type Comparison, type DiffMode, type DiffOptions, type EncodingChoice, type Merge3, type TextEncoding } from "./types";
 
 interface Child {
   rel: string;
@@ -45,6 +46,7 @@ interface ResultProps {
   leftPath: string | null;
   rightPath: string | null;
   onOpen?: (rel: string) => void;
+  onThreeWay?: () => void;
   onCopy?: (rel: string, from: "left" | "right", overwrite: boolean) => void;
   onDelete?: (rel: string, side: "left" | "right") => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -54,7 +56,7 @@ function Result(props: ResultProps) {
   const { result } = props;
   switch (result.kind) {
     case "text":
-      return <TextCompare leftText={result.left_text} rightText={result.right_text} rows={result.rows} mode={props.mode} options={props.options} onDirtyChange={props.onDirtyChange} leftPath={props.leftPath} rightPath={props.rightPath} leftEncoding={result.left_encoding} rightEncoding={result.right_encoding} />;
+      return <TextCompare leftText={result.left_text} rightText={result.right_text} rows={result.rows} mode={props.mode} options={props.options} onDirtyChange={props.onDirtyChange} leftPath={props.leftPath} rightPath={props.rightPath} leftEncoding={result.left_encoding} rightEncoding={result.right_encoding} onThreeWay={props.onThreeWay} />;
     case "binary":
       return <BinaryCompare rows={result.rows} />;
     case "directory":
@@ -76,6 +78,7 @@ export default function App() {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   const [overviewSlot, setOverviewSlot] = useState<HTMLElement | null>(null);
   const [encodings, setEncodings] = useState<EncodingChoice>(AUTO_ENCODING);
+  const [threeWay, setThreeWay] = useState<{ data: Merge3; basePath: string } | null>(null);
   const [recent, setRecent] = useState(loadRecent);
   useEffect(() => saveSettings(settings), [settings]);
   // メニューバーの「設定…」(Rust 側から emit)
@@ -110,6 +113,7 @@ export default function App() {
     setResult(null);
     setError(null);
     setEncodings(AUTO_ENCODING);
+    setThreeWay(null);
     if (!left && !right) return;
     let stale = false;
     comparePaths(left, right, modeRef.current, optionsRef.current, AUTO_ENCODING).then(
@@ -227,6 +231,25 @@ export default function App() {
     return detected === undefined ? undefined : { detected, value: encodings[side], onChange: changeEncoding(side) };
   };
 
+  /** 基準ファイルを選んで、左・右との3ウェイマージを始める。 */
+  const startThreeWay = async () => {
+    if (!left || !right || !(await confirmLeave())) return;
+    try {
+      const basePath = await pickPath(false);
+      if (!basePath) return;
+      setThreeWay({ data: await merge3Files(basePath, left, right), basePath });
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  const closeThreeWay = async () => {
+    if (!(await confirmLeave())) return;
+    await refresh(); // マージ結果の保存で左右のファイルが変わっていることがあるので、先に読み直す
+    setRunId((n) => n + 1);
+    setThreeWay(null);
+  };
+
   const openChild = async (rel: string) => {
     if (!left || !right) return;
     const l = joinPath(left, rel);
@@ -265,17 +288,21 @@ export default function App() {
         </select>
         <div className="toolbar-slot" ref={setSlot} />
       </header>
+      {!threeWay && (
       <div className="pane-headers">
         <PathPicker side="left" value={left} info={left ? sizeInfo(result ?? null, child, "left") : undefined} encoding={left ? encodingControl("left") : undefined} choosing={choosing === "left"} onPick={pick("left")} onChoose={choose("left")} onClose={close("left")} />
         <div className="mid" />
         <PathPicker side="right" value={right} info={right ? sizeInfo(result ?? null, child, "right") : undefined} encoding={right ? encodingControl("right") : undefined} choosing={choosing === "right"} onPick={pick("right")} onChoose={choose("right")} onClose={close("right")} />
       </div>
+      )}
       {error && <div role="alert" className="error">{error}</div>}
       <ToolbarSlotContext.Provider value={slot}>
       <OverviewSlotContext.Provider value={overviewSlot}>
       <div className="main-wrap">
       <main>
-        {child ? (
+        {threeWay && left && right ? (
+          <ThreeWay data={threeWay.data} basePath={threeWay.basePath} leftPath={left} rightPath={right} onDirtyChange={setDirty} onClose={() => void closeThreeWay()} />
+        ) : child ? (
           <>
             <div className="bar">
               <button onClick={() => void back()}>← ディレクトリ比較に戻る</button>
@@ -284,7 +311,7 @@ export default function App() {
             <Result key={child.rel} result={child.result} mode={mode} options={options} onDirtyChange={setDirty} leftPath={child.left} rightPath={child.right} />
           </>
         ) : result ? (
-          <Result key={runId} result={result} mode={mode} options={options} onDirtyChange={setDirty} leftPath={left} rightPath={right} onOpen={openChild} onCopy={copyTo} onDelete={removeFrom} />
+          <Result key={runId} result={result} mode={mode} options={options} onDirtyChange={setDirty} leftPath={left} rightPath={right} onOpen={openChild} onThreeWay={() => void startThreeWay()} onCopy={copyTo} onDelete={removeFrom} />
         ) : (
           <p className="empty">比較する2つのファイルまたはフォルダを選択、またはウィンドウへドロップしてください。</p>
         )}

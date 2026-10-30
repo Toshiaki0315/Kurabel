@@ -412,4 +412,14 @@ describe("TextCompare", () => {
     fireEvent.click(screen.getByRole("button", { name: "差分1へ移動" }));
     expect(screen.getByText(/1 \/ 1 箇所/)).toBeInTheDocument();
   });
+
+  it("offers 3-way merge only when the app provides a handler and two files are open", () => {
+    const onThreeWay = vi.fn();
+    const { unmount } = render(<TextCompare leftText="a" rightText="b" rows={[]} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} onThreeWay={onThreeWay} />);
+    fireEvent.click(screen.getByText("3ウェイ…"));
+    expect(onThreeWay).toHaveBeenCalledTimes(1);
+    unmount();
+    render(<TextCompare leftText="a" rightText="b" rows={[]} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+    expect(screen.queryByText("3ウェイ…")).toBeNull();
+  });
 });

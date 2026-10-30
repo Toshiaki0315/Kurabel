@@ -33,6 +33,8 @@ interface Props {
   rightPath: string | null;
   leftEncoding: TextEncoding;
   rightEncoding: TextEncoding;
+  /** 3ウェイマージを始める（基準ファイルの選択から） */
+  onThreeWay?: () => void;
 }
 
 export function TextCompare(props: Props) {
@@ -221,6 +223,7 @@ export function TextCompare(props: Props) {
               差分 {diffCount} 行{blocks.length > 0 && cursor >= 0 ? `（${cursor + 1} / ${blocks.length} 箇所）` : ""}
             </span>
             <button onClick={() => void exportPatch()}>パッチを保存…</button>
+            {props.onThreeWay && <button onClick={props.onThreeWay}>3ウェイ…</button>}
             {notice && <span className="summary">{notice}</span>}
             {findOpen && (
               <span className="find">

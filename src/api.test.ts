@@ -16,13 +16,16 @@ import {
   confirmAction,
   confirmDiscard,
   copyEntry,
+  createText,
   deleteEntry,
   diffText,
   initialPaths,
   makePatch,
+  merge3Files,
   pathKind,
   pickPatchPath,
   pickPath,
+  pickSavePath,
   saveText,
   writePatch,
 } from "./api";
@@ -96,5 +99,17 @@ describe("api", () => {
     confirm.mockResolvedValue(true);
     expect(await confirmAction("削除しますか？", "削除")).toBe(true);
     expect(confirm).toHaveBeenLastCalledWith("削除しますか？", expect.objectContaining({ okLabel: "削除", cancelLabel: "キャンセル" }));
+  });
+
+  it("wraps merge3 / create_text and the plain save dialog", async () => {
+    invoke.mockResolvedValue({});
+    await merge3Files("/b", "/l", "/r");
+    expect(invoke).toHaveBeenLastCalledWith("merge3", { base: "/b", left: "/l", right: "/r" });
+    const encoding = { name: "UTF-8", bom: false };
+    await createText("/n.txt", "x", encoding);
+    expect(invoke).toHaveBeenLastCalledWith("create_text", { path: "/n.txt", content: "x", encoding });
+    save.mockResolvedValue("/chosen");
+    expect(await pickSavePath("a.txt")).toBe("/chosen");
+    expect(save).toHaveBeenLastCalledWith({ defaultPath: "a.txt" });
   });
 });

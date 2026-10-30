@@ -69,6 +69,24 @@ export interface TextEncoding {
   bom: boolean;
 }
 
+/** 3ウェイマージの断片（左・右は base から分かれたファイル） */
+export type MergeChunk =
+  | { kind: "stable"; lines: string[] }
+  | { kind: "left"; base: string[]; left: string[] }
+  | { kind: "right"; base: string[]; right: string[] }
+  | { kind: "same"; base: string[]; lines: string[] }
+  | { kind: "conflict"; base: string[]; left: string[]; right: string[] };
+
+export interface Merge3 {
+  chunks: MergeChunk[];
+  left_encoding: TextEncoding;
+  base_encoding: TextEncoding;
+  right_encoding: TextEncoding;
+  /** 結果を組み立てるときの改行 ("\n" または "\r\n") */
+  eol: string;
+  trailing_newline: boolean;
+}
+
 export type Comparison =
   | {
       kind: "text";
