@@ -2,8 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { diffText, saveText } from "../api";
 import type { DiffMode, DiffRow } from "../types";
 import { ToolbarPortal } from "./ToolbarSlot";
-import { NumberedTextarea } from "./NumberedTextarea";
+import { NumberedTextarea, type LineHighlight } from "./NumberedTextarea";
 import { CellText } from "./Segments";
+
+const REDIFF_DELAY_MS = 300;
+
+function highlightsFor(rows: DiffRow[], side: "left" | "right"): Map<number, LineHighlight> {
+  const map = new Map<number, LineHighlight>();
+  for (const row of rows) {
+    const cell = row[side];
+    if (cell && row.kind !== "equal") map.set(cell.line_no, { kind: row.kind, segments: cell.segments });
+  }
+  return map;
+}
 
 interface Props {
   leftText: string;
@@ -23,10 +34,16 @@ export function TextCompare(props: Props) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const first = useRef(true);
+  const diffed = useRef({ left: props.leftText, right: props.rightText });
+  const seq = useRef(0);
 
   const rediff = async (l: string, r: string, mode: DiffMode) => {
+    const id = ++seq.current;
+    diffed.current = { left: l, right: r };
     try {
-      setRows(await diffText(l, r, mode));
+      const next = await diffText(l, r, mode);
+      if (id !== seq.current) return; // より新しい比較が走っている
+      setRows(next);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -55,26 +72,32 @@ export function TextCompare(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.mode]);
 
+  // 入力が止まってから自動で再比較し、ハイライトを追従させる
+  useEffect(() => {
+    if ((leftText === diffed.current.left && rightText === diffed.current.right)) return;
+    const timer = setTimeout(() => void rediff(leftText, rightText, props.mode), REDIFF_DELAY_MS);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leftText, rightText]);
+
+  const isDirty = (side: "left" | "right") => (side === "left" ? leftText !== savedLeft : rightText !== savedRight);
+  // Cmd/Ctrl+S: カーソルのあるペインのみ保存
+  const saveShortcut = (side: "left" | "right") => () => {
+    if (isDirty(side)) void save(side);
+  };
+
   const diffCount = rows.filter((r) => r.kind !== "equal").length;
 
   return (
     <section className="text-compare">
       <ToolbarPortal>
         <button onClick={() => setEditing((v) => !v)}>{editing ? "表示に戻る" : "編集"}</button>
-        <button
-          onClick={() => {
-            setEditing(false);
-            void rediff(leftText, rightText, props.mode);
-          }}
-        >
-          再比較
-        </button>
         <span className="summary">差分 {diffCount} 行</span>
         {error && <span role="alert" className="error">{error}</span>}
       </ToolbarPortal>
       <div className="pane-actions">
         {(["left", "right"] as const).map((side) => {
-          const dirty = side === "left" ? leftText !== savedLeft : rightText !== savedRight;
+          const dirty = isDirty(side);
           return (
             <div key={side} className={`pane-action ${side}`}>
               <button aria-label={`${side === "left" ? "左" : "右"}を保存`} disabled={!dirty} onClick={() => void save(side)}>
@@ -85,12 +108,12 @@ export function TextCompare(props: Props) {
           );
         })}
       </div>
-      {editing ? (
-        <div className="edit-panes">
-          <NumberedTextarea label="左のテキスト" value={leftText} onChange={setLeftText} />
-          <NumberedTextarea label="右のテキスト" value={rightText} onChange={setRightText} />
-        </div>
-      ) : (
+      {/* 編集→表示→編集でも元に戻す履歴を保つため、テキストエリアは常に保持し表示だけ切り替える */}
+      <div className="edit-panes" hidden={!editing}>
+        <NumberedTextarea label="左のテキスト" value={leftText} onChange={setLeftText} onSave={saveShortcut("left")} highlights={highlightsFor(rows, "left")} />
+        <NumberedTextarea label="右のテキスト" value={rightText} onChange={setRightText} onSave={saveShortcut("right")} highlights={highlightsFor(rows, "right")} />
+      </div>
+      {!editing && (
         <table className="diff-table">
           <tbody>
             {rows.map((row, i) => (

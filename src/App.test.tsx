@@ -53,7 +53,7 @@ describe("App", () => {
     await choose("左", "/l.txt");
     await choose("右", "/r.txt");
     await waitFor(() => expect(comparePaths).toHaveBeenCalledWith("/l.txt", "/r.txt", "line"));
-    expect(await screen.findByText("再比較")).toBeInTheDocument();
+    expect(await screen.findByText("編集")).toBeInTheDocument();
   });
 
   it("ignores a cancelled dialog", async () => {

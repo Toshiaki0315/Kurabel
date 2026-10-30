@@ -26,15 +26,15 @@ describe("TextCompare", () => {
     saveText.mockReset();
   });
 
-  it("renders line numbers, text, highlights and the diff count", () => {
-    setup();
-    expect(screen.getByText("old").tagName).toBe("MARK");
-    expect(screen.getByText("new")).toBeInTheDocument();
+  it("renders line numbers, text, highlights and the diff count in view mode", () => {
+    const { container } = setup();
+    expect(container.querySelector(".diff-table mark")!.textContent).toBe("old");
     expect(screen.getByText("差分 1 行")).toBeInTheDocument();
-    expect(screen.getAllByText("2")).toHaveLength(2);
+    expect(screen.queryByText("再比較")).toBeNull();
+    expect(container.querySelector(".edit-panes")).toHaveAttribute("hidden");
   });
 
-  it("edits text and re-diffs with the edited content", async () => {
+  it("re-diffs automatically after editing, without a button", async () => {
     diffText.mockResolvedValue([]);
     setup();
     fireEvent.click(screen.getByText("編集"));
@@ -42,17 +42,21 @@ describe("TextCompare", () => {
     fireEvent.change(screen.getByLabelText("右のテキスト"), { target: { value: "y" } });
     expect(screen.getAllByText("1")).toHaveLength(2); // 左右の編集ペインそれぞれに行番号
     fireEvent.scroll(screen.getByLabelText("左のテキスト"), { target: { scrollTop: 10 } });
-    fireEvent.click(screen.getByText("再比較"));
-    await waitFor(() => expect(diffText).toHaveBeenCalledWith("x", "y", "line"));
+    await waitFor(() => expect(diffText).toHaveBeenCalledWith("x", "y", "line"), { timeout: 2000 });
     await waitFor(() => expect(screen.getByText("差分 0 行")).toBeInTheDocument());
-    expect(screen.queryByLabelText("左のテキスト")).toBeNull();
   });
 
-  it("toggles back to the view without re-diffing", () => {
-    setup();
+  it("keeps the editors (and their undo history) mounted across edit/view toggles", () => {
+    const { container } = setup();
     fireEvent.click(screen.getByText("編集"));
+    const ta = screen.getByLabelText("左のテキスト");
+    expect(container.querySelector(".edit-panes")).not.toHaveAttribute("hidden");
+    expect(container.querySelector(".diff-table")).toBeNull();
     fireEvent.click(screen.getByText("表示に戻る"));
-    expect(screen.getByText("old")).toBeInTheDocument();
+    expect(container.querySelector(".diff-table")).not.toBeNull();
+    expect(container.querySelector(".edit-panes")).toHaveAttribute("hidden");
+    fireEvent.click(screen.getByText("編集"));
+    expect(screen.getByLabelText("左のテキスト")).toBe(ta);
     expect(diffText).not.toHaveBeenCalled();
   });
 
@@ -67,8 +71,9 @@ describe("TextCompare", () => {
   it("shows an error when re-diff fails", async () => {
     diffText.mockImplementation(() => Promise.reject(new Error("boom")));
     setup();
-    fireEvent.click(screen.getByText("再比較"));
-    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+    fireEvent.click(screen.getByText("編集"));
+    fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "x" } });
+    expect(await screen.findByRole("alert", undefined, { timeout: 2000 })).toHaveTextContent("boom");
   });
 
   it("saves only the edited pane and clears the dirty marker", async () => {
@@ -100,5 +105,41 @@ describe("TextCompare", () => {
     fireEvent.click(screen.getByRole("button", { name: "左を保存" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("denied");
     expect(screen.getByText("未保存の変更あり")).toBeInTheDocument();
+  });
+
+  it("Cmd/Ctrl+S saves the focused pane only, and only when it has changes", async () => {
+    saveText.mockResolvedValue(undefined);
+    diffText.mockResolvedValue([]);
+    setup();
+    fireEvent.click(screen.getByText("編集"));
+    fireEvent.keyDown(screen.getByLabelText("右のテキスト"), { key: "s", metaKey: true });
+    expect(saveText).not.toHaveBeenCalled(); // 変更なし
+    fireEvent.change(screen.getByLabelText("右のテキスト"), { target: { value: "R" } });
+    fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "L" } });
+    fireEvent.keyDown(screen.getByLabelText("右のテキスト"), { key: "s", ctrlKey: true });
+    await waitFor(() => expect(saveText).toHaveBeenCalledTimes(1));
+    expect(saveText).toHaveBeenCalledWith("/r.txt", "R");
+  });
+
+  it("keeps highlights in edit mode", () => {
+    const { container } = setup();
+    fireEvent.click(screen.getByText("編集"));
+    expect(container.querySelector(".hl-replace")).not.toBeNull();
+    expect(container.querySelector(".hl-layer mark")!.textContent).toBe("old");
+  });
+
+  it("ignores out-of-date re-diff results", async () => {
+    let resolveFirst: (v: DiffRow[]) => void = () => {};
+    diffText.mockImplementationOnce(() => new Promise<DiffRow[]>((r) => (resolveFirst = r)));
+    diffText.mockResolvedValueOnce([]);
+    setup();
+    fireEvent.click(screen.getByText("編集"));
+    fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "a" } });
+    await waitFor(() => expect(diffText).toHaveBeenCalledTimes(1), { timeout: 2000 });
+    fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "b" } });
+    await waitFor(() => expect(screen.getByText("差分 0 行")).toBeInTheDocument(), { timeout: 2000 });
+    resolveFirst(rows);
+    await Promise.resolve();
+    expect(screen.getByText("差分 0 行")).toBeInTheDocument();
   });
 });
