@@ -37,6 +37,17 @@ pub fn make_patch(left_text: String, right_text: String, left_label: String, rig
 }
 
 #[tauri::command]
+pub fn write_report(path: String, content: String) -> Result<(), String> {
+    fileops::write_report(path.as_ref(), &content)
+}
+
+/// 正規表現として有効か（比較に使えるか）を確認する。
+#[tauri::command]
+pub fn check_regex(pattern: String) -> Result<(), String> {
+    textdiff::compile_pattern(&pattern).map(|_| ())
+}
+
+#[tauri::command]
 pub fn write_patch(path: String, content: String) -> Result<(), String> {
     fileops::write_patch(path.as_ref(), &content)
 }
@@ -151,5 +162,14 @@ mod tests {
         let enc = TextEncoding { name: "UTF-8".into(), bom: false };
         create_text(out.clone(), "x".into(), enc.clone()).unwrap();
         assert!(create_text(out, "y".into(), enc).is_err());
+    }
+
+    #[test]
+    fn report_and_regex_commands() {
+        assert!(check_regex(r"^\s*#".into()).is_ok());
+        assert!(check_regex("(".into()).is_err());
+        let d = tempfile::tempdir().unwrap();
+        write_report(d.path().join("r.html").to_string_lossy().into_owned(), "<p/>".into()).unwrap();
+        assert!(write_report(d.path().join("r.txt").to_string_lossy().into_owned(), "x".into()).is_err());
     }
 }

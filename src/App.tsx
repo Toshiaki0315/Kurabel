@@ -60,7 +60,7 @@ function Result(props: ResultProps) {
     case "binary":
       return <BinaryCompare rows={result.rows} truncated={result.truncated} />;
     case "directory":
-      return <DirCompare entries={result.entries} onOpen={props.onOpen ?? (() => {})} onCopy={props.onCopy} onDelete={props.onDelete} single={props.leftPath === null || props.rightPath === null} />;
+      return <DirCompare entries={result.entries} onOpen={props.onOpen ?? (() => {})} onCopy={props.onCopy} onDelete={props.onDelete} leftRoot={props.leftPath} rightRoot={props.rightPath} single={props.leftPath === null || props.rightPath === null} />;
   }
 }
 

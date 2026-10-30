@@ -9,6 +9,8 @@ export interface DiffOptions {
   ignore_comments: boolean;
   /** 行コメントの開始文字列（例: `//`、`#`） */
   comment_prefixes: string[];
+  /** この正規表現に一致する行を比較から外す（1行に1パターン） */
+  ignore_line_patterns: string[];
   /** 移動した行を検出して印を付ける */
   detect_moves: boolean;
   /** フォルダ比較で除外するパターン（`*` と `?` が使える） */
@@ -25,6 +27,7 @@ export const DEFAULT_OPTIONS: DiffOptions = {
   ignore_blank_lines: false,
   ignore_comments: false,
   comment_prefixes: ["//", "#"],
+  ignore_line_patterns: [],
   detect_moves: true,
   exclude: [],
   recursive: true,
@@ -76,6 +79,12 @@ export interface DirEntry {
   left: NodeKind | null;
   right: NodeKind | null;
   status: DirStatus;
+  /** ファイルのサイズ（バイト）。フォルダ・存在しない側は null */
+  left_size?: number | null;
+  right_size?: number | null;
+  /** ファイルの更新日時（UNIX 秒） */
+  left_modified?: number | null;
+  right_modified?: number | null;
 }
 
 export interface TextEncoding {

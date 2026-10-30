@@ -8,6 +8,8 @@ const saveText = vi.fn();
 const makePatch = vi.fn();
 const pickPatchPath = vi.fn();
 const writePatch = vi.fn();
+const saveReport = vi.fn();
+vi.mock("../lib/saveReport", () => ({ saveReport: (...a: unknown[]) => saveReport(...a) }));
 vi.mock("../api", () => ({
   makePatch: (...a: unknown[]) => makePatch(...a),
   pickPatchPath: (...a: unknown[]) => pickPatchPath(...a),
@@ -50,6 +52,7 @@ describe("TextCompare", () => {
     makePatch.mockReset();
     pickPatchPath.mockReset();
     writePatch.mockReset();
+    saveReport.mockReset();
   });
 
   it("renders line numbers, text, highlights and the diff count in view mode", () => {
@@ -589,6 +592,35 @@ describe("TextCompare", () => {
       const { container } = render(<TextCompare leftText="a" rightText="a" rows={small} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
       expect(container.querySelector("table.diff-table")).not.toHaveClass("virtual");
       expect(container.querySelectorAll("table.diff-table tbody tr")).toHaveLength(50);
+    });
+  });
+
+  describe("report export", () => {
+    it("saves an HTML report of the current comparison and confirms", async () => {
+      saveReport.mockResolvedValue(true);
+      setup();
+      fireEvent.click(screen.getByText("レポートを保存…"));
+      expect(await screen.findByText("レポートを保存しました")).toBeInTheDocument();
+      const [html, name] = saveReport.mock.calls[0];
+      expect(html).toContain("/l.txt");
+      expect(html).toContain("<mark>old</mark>");
+      expect(name).toBe("l.txt.html");
+    });
+
+    it("does nothing visible when cancelled, and shows an error when saving fails", async () => {
+      saveReport.mockResolvedValueOnce(false);
+      setup();
+      fireEvent.click(screen.getByText("レポートを保存…"));
+      await waitFor(() => expect(saveReport).toHaveBeenCalled());
+      expect(screen.queryByText("レポートを保存しました")).toBeNull();
+      saveReport.mockRejectedValueOnce(new Error("書き込めません"));
+      fireEvent.click(screen.getByText("レポートを保存…"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("書き込めません");
+    });
+
+    it("is not offered for a single opened file", () => {
+      render(<TextCompare leftText="a" rightText="" rows={[]} mode="line" options={OPTS} leftPath="/l" rightPath={null} leftEncoding={UTF8} rightEncoding={UTF8} />);
+      expect(screen.queryByText("レポートを保存…")).toBeNull();
     });
   });
 });

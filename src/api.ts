@@ -100,3 +100,17 @@ export function createText(path: string, content: string, encoding: TextEncoding
 export async function pickSavePath(defaultName: string): Promise<string | null> {
   return save({ defaultPath: defaultName });
 }
+
+/** レポート（HTML）の保存先をダイアログで選ぶ。キャンセル時は null。 */
+export async function pickReportPath(defaultName: string): Promise<string | null> {
+  return save({ defaultPath: defaultName, filters: [{ name: "HTML レポート", extensions: ["html", "htm"] }] });
+}
+
+export function writeReport(path: string, content: string): Promise<void> {
+  return invoke("write_report", { path, content });
+}
+
+/** 正規表現として有効か確認する。無効なら理由を投げる。 */
+export function checkRegex(pattern: string): Promise<void> {
+  return invoke("check_regex", { pattern });
+}

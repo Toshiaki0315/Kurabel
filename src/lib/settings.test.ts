@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, loadSettings, parseExclude, saveSettings } from "./settings";
+import { DEFAULT_SETTINGS, loadSettings, parseExclude, parseLines, saveSettings } from "./settings";
 
 describe("settings", () => {
   beforeEach(() => localStorage.clear());
@@ -45,5 +45,17 @@ describe("settings", () => {
     localStorage.setItem("kurabel.settings", JSON.stringify({ options: { comment_prefixes: "nope" } }));
     expect(loadSettings().options.comment_prefixes).toEqual(DEFAULT_SETTINGS.options.comment_prefixes);
     expect(loadSettings().options.detect_moves).toBe(true);
+  });
+
+  it("parses regex patterns one per line, keeping commas and spaces", () => {
+    expect(parseLines("^\\s*Last, updated:\r\n\n  x{1,3}\n")).toEqual(["^\\s*Last, updated:", "  x{1,3}"]);
+    expect(parseLines("")).toEqual([]);
+  });
+
+  it("loads and sanitizes the line-ignore patterns", () => {
+    localStorage.setItem("kurabel.settings", JSON.stringify({ options: { ignore_line_patterns: ["^#", 5, null] } }));
+    expect(loadSettings().options.ignore_line_patterns).toEqual(["^#"]);
+    localStorage.setItem("kurabel.settings", JSON.stringify({ options: { ignore_line_patterns: "x" } }));
+    expect(loadSettings().options.ignore_line_patterns).toEqual([]);
   });
 });

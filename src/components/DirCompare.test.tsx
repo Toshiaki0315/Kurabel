@@ -1,6 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import type { DirEntry } from "../types";
+const saveReport = vi.fn();
+vi.mock("../lib/saveReport", () => ({ saveReport: (...a: unknown[]) => saveReport(...a) }));
+
 import { DirCompare } from "./DirCompare";
 
 const entries: DirEntry[] = [
@@ -149,6 +152,63 @@ describe("DirCompare", () => {
       select("gone.txt");
       fireEvent.click(screen.getByText("→ 右へコピー"));
       fireEvent.click(screen.getByText("左を削除"));
+    });
+  });
+
+  describe("size and modified-time columns", () => {
+    const meta: DirEntry[] = [
+      { path: "a.txt", left: "file", right: "file", status: "modified", left_size: 2048, right_size: 100, left_modified: 2_000_000_000, right_modified: 1_000_000_000 },
+      { path: "left.txt", left: "file", right: null, status: "removed", left_size: 5, left_modified: 1_500_000_000 },
+      { path: "d", left: "directory", right: "directory", status: "same" },
+    ];
+
+    it("shows sizes and dates for files on each side, and nothing for folders", () => {
+      render(<DirCompare entries={meta} onOpen={vi.fn()} />);
+      const row = screen.getByRole("treeitem", { name: "a.txt" });
+      expect(row).toHaveTextContent("2.0 KB");
+      expect(row).toHaveTextContent("100 B");
+      expect(screen.getByRole("treeitem", { name: "left.txt" })).toHaveTextContent("5 B");
+      expect(screen.getByRole("treeitem", { name: "d" }).querySelectorAll(".dir-size")[0]).toHaveTextContent("");
+    });
+
+    it("emphasizes the newer date of a modified file only", () => {
+      render(<DirCompare entries={meta} onOpen={vi.fn()} />);
+      const dates = screen.getByRole("treeitem", { name: "a.txt" }).querySelectorAll(".dir-date");
+      expect(dates[0]).toHaveClass("newer");
+      expect(dates[1]).not.toHaveClass("newer");
+      expect(screen.getByRole("treeitem", { name: "left.txt" }).querySelector(".newer")).toBeNull();
+    });
+  });
+
+  describe("report", () => {
+    beforeEach(() => saveReport.mockReset());
+
+    it("saves an HTML report of all entries and confirms", async () => {
+      saveReport.mockResolvedValue(true);
+      render(<DirCompare entries={entries} onOpen={vi.fn()} leftRoot="/L" rightRoot="/R" />);
+      fireEvent.click(screen.getByText("レポートを保存…"));
+      expect(await screen.findByText("レポートを保存しました")).toBeInTheDocument();
+      const [html, name] = saveReport.mock.calls[0];
+      expect(html).toContain("/L");
+      expect(html).toContain("gone.txt");
+      expect(name).toBe("L-compare.html");
+    });
+
+    it("says nothing when the dialog is cancelled, and shows an error when saving fails", async () => {
+      saveReport.mockResolvedValueOnce(false);
+      render(<DirCompare entries={entries} onOpen={vi.fn()} />);
+      fireEvent.click(screen.getByText("レポートを保存…"));
+      await waitFor(() => expect(saveReport).toHaveBeenCalled());
+      expect(screen.queryByText("レポートを保存しました")).toBeNull();
+      expect(saveReport.mock.calls[0][1]).toBe("folder-compare.html");
+      saveReport.mockRejectedValueOnce(new Error("拡張子が不正"));
+      fireEvent.click(screen.getByText("レポートを保存…"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("拡張子が不正");
+    });
+
+    it("has no report button in single mode", () => {
+      render(<DirCompare entries={entries} onOpen={vi.fn()} single />);
+      expect(screen.queryByText("レポートを保存…")).toBeNull();
     });
   });
 });

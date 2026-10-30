@@ -1,4 +1,8 @@
 import { useMemo, useState } from "react";
+import { formatDate, formatSize } from "../lib/format";
+import { baseName } from "../lib/recent";
+import { buildDirReport, nowLabel } from "../lib/report";
+import { saveReport } from "../lib/saveReport";
 import { buildTree, collapsibleDirs, isDirNode, isVisible, type StatusFilter, type TreeNode } from "../lib/tree";
 import { ToolbarPortal } from "./ToolbarSlot";
 import type { DirEntry } from "../types";
@@ -29,21 +33,29 @@ function Node(props: NodeProps) {
   const name = `${dir ? "📁 " : ""}${node.name}`;
   const label = (present: boolean) =>
     present && (openable ? <button className="link" onClick={() => onOpen(node.path)}>{name}</button> : name);
+  // 変更されたファイルは、更新日時が新しい側を強調する
+  const newer = (mine: number | null, other: number | null) =>
+    node.status === "modified" && mine !== null && other !== null && mine > other ? " newer" : "";
+  const side = (present: boolean, size: number | null, modified: number | null, other: number | null, toggle: boolean) => (
+    <div className="dir-cell">
+      <span className="dir-name" style={pad}>
+        {toggle && expandable && (
+          <button className="toggle" aria-label={`${node.path}を${open ? "閉じる" : "開く"}`} onClick={() => onToggle(node.path)}>
+            {open ? "▼" : "▶"}
+          </button>
+        )}
+        {label(present)}
+      </span>
+      <span className="dir-size">{formatSize(size)}</span>
+      <span className={`dir-date${newer(modified, other)}`}>{formatDate(modified)}</span>
+    </div>
+  );
   return (
     <>
       <div className={`dir-row st-${node.status}${selected === node.path ? " selected" : ""}`} onClick={() => onSelect(node.path)} role="treeitem" aria-label={node.path} aria-expanded={expandable ? open : undefined}>
-        <div className="dir-cell" style={pad}>
-          {expandable && (
-            <button className="toggle" aria-label={`${node.path}を${open ? "閉じる" : "開く"}`} onClick={() => onToggle(node.path)}>
-              {open ? "▼" : "▶"}
-            </button>
-          )}
-          {label(node.left !== null)}
-        </div>
+        {side(node.left !== null, node.leftSize, node.leftModified, node.rightModified, true)}
         <div className="dir-status mid">{node.status === "same" && (dir || node.left === null || node.right === null) ? "" : LABEL[node.status]}</div>
-        <div className="dir-cell" style={pad}>
-          {label(node.right !== null)}
-        </div>
+        {side(node.right !== null, node.rightSize, node.rightModified, node.leftModified, false)}
       </div>
       {open &&
         node.children.map((c) => <Node key={c.path} {...props} node={c} depth={depth + 1} />)}
@@ -59,6 +71,9 @@ interface DirCompareProps {
   /** 選択した項目を反対側へコピー（overwrite: コピー先に同名の項目がある） */
   onCopy?: (relPath: string, from: "left" | "right", overwrite: boolean) => void;
   onDelete?: (relPath: string, side: "left" | "right") => void;
+  /** レポートの見出しに使う、左右のフォルダのパス */
+  leftRoot?: string | null;
+  rightRoot?: string | null;
 }
 
 export function DirCompare(props: DirCompareProps) {
@@ -67,6 +82,16 @@ export function DirCompare(props: DirCompareProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
   const sel = props.entries.find((e) => e.path === selected);
+  const [report, setReport] = useState<{ message: string; error: boolean } | null>(null);
+  const exportReport = async () => {
+    try {
+      const html = buildDirReport(props.leftRoot ?? "", props.rightRoot ?? "", props.entries, nowLabel());
+      const saved = await saveReport(html, `${baseName(props.leftRoot ?? "folder")}-compare.html`);
+      setReport(saved ? { message: "レポートを保存しました", error: false } : null);
+    } catch (e) {
+      setReport({ message: String(e), error: true });
+    }
+  };
   const tree = useMemo(() => buildTree(props.entries), [props.entries]);
   const toggle = (path: string) =>
     setCollapsed((cur) => {
@@ -104,6 +129,8 @@ export function DirCompare(props: DirCompareProps) {
             <button disabled={!sel?.right} onClick={() => sel && props.onDelete?.(sel.path, "right")}>
               右を削除
             </button>
+            <button onClick={() => void exportReport()}>レポートを保存…</button>
+            {report && (report.error ? <span role="alert" className="error">{report.message}</span> : <span className="summary">{report.message}</span>)}
           </>
         )}
         {!props.single && <span className="summary">{props.entries.filter((e) => e.status !== "same").length} 件の差分</span>}

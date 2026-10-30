@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { diffText, makePatch, pickPatchPath, saveText, writePatch } from "../api";
 import { findMatches, replaceAll, replaceMatch, type Match } from "../lib/find";
 import { baseName } from "../lib/recent";
+import { buildTextReport, nowLabel } from "../lib/report";
+import { saveReport } from "../lib/saveReport";
 import { applyBlock, blockLines, correspondingLine, findBlocks, type Side } from "../lib/merge";
 import type { DiffMode, DiffOptions, DiffRow, TextEncoding } from "../types";
 import { CellText } from "./Segments";
@@ -191,6 +193,20 @@ export function TextCompare(props: Props) {
     editors[activeSide].current?.replaceText(replaceAll(activeText, query, replacement));
   };
 
+  const exportReport = async () => {
+    if (props.leftPath === null || props.rightPath === null) return;
+    try {
+      const html = buildTextReport(props.leftPath, props.rightPath, rows, nowLabel());
+      if (await saveReport(html, `${baseName(props.leftPath)}.html`)) {
+        setNotice("レポートを保存しました");
+        setTimeout(() => setNotice(null), 4000);
+      }
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const exportPatch = async () => {
     if (props.leftPath === null || props.rightPath === null) return;
     try {
@@ -287,6 +303,7 @@ export function TextCompare(props: Props) {
               差分 {diffCount} 行{blocks.length > 0 && cursor >= 0 ? `（${cursor + 1} / ${blocks.length} 箇所）` : ""}
             </span>
             <button onClick={() => void exportPatch()}>パッチを保存…</button>
+            <button onClick={() => void exportReport()}>レポートを保存…</button>
             {props.onThreeWay && <button onClick={props.onThreeWay}>3ウェイ…</button>}
             {notice && <span className="summary">{notice}</span>}
             {findOpen && (

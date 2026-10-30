@@ -38,6 +38,23 @@ pub struct DirEntry {
     pub left: Option<NodeKind>,
     pub right: Option<NodeKind>,
     pub status: DirStatus,
+    /// ファイルのサイズ（バイト）。フォルダ・存在しない側は None
+    pub left_size: Option<u64>,
+    pub right_size: Option<u64>,
+    /// ファイルの更新日時（UNIX 秒）。取得できない場合は None
+    pub left_modified: Option<i64>,
+    pub right_modified: Option<i64>,
+}
+
+/// ファイルのサイズと更新日時（UNIX 秒）。フォルダや、読み取れない場合は None。
+fn file_meta(node: Option<&(NodeKind, PathBuf)>) -> (Option<u64>, Option<i64>) {
+    let Some((NodeKind::File, path)) = node else { return (None, None) };
+    let Ok(meta) = std::fs::metadata(path) else { return (None, None) };
+    let modified = meta.modified().ok().and_then(|t| match t.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => i64::try_from(d.as_secs()).ok(),
+        Err(e) => i64::try_from(e.duration().as_secs()).ok().map(|s| -s),
+    });
+    (Some(meta.len()), modified)
 }
 
 type Tree = BTreeMap<String, (NodeKind, PathBuf)>;
@@ -118,11 +135,18 @@ fn collect(root: &Path, options: &DiffOptions) -> Result<Tree, String> {
 pub fn list_dir(root: &Path, left_side: bool, options: &DiffOptions) -> Result<Vec<DirEntry>, String> {
     Ok(collect(root, options)?
         .into_iter()
-        .map(|(path, (kind, _))| DirEntry {
-            path,
-            left: left_side.then_some(kind),
-            right: (!left_side).then_some(kind),
-            status: DirStatus::Same,
+        .map(|(path, (kind, full))| {
+            let (size, modified) = file_meta(Some(&(kind, full)));
+            DirEntry {
+                path,
+                left: left_side.then_some(kind),
+                right: (!left_side).then_some(kind),
+                status: DirStatus::Same,
+                left_size: if left_side { size } else { None },
+                right_size: if left_side { None } else { size },
+                left_modified: if left_side { modified } else { None },
+                right_modified: if left_side { None } else { modified },
+            }
         })
         .collect())
 }
@@ -178,11 +202,16 @@ pub fn compare_dirs(left: &Path, right: &Path, options: &DiffOptions) -> Result<
             }
             _ => DirStatus::Same,
         };
+        let ((left_size, left_modified), (right_size, right_modified)) = (file_meta(l), file_meta(r));
         entries.push(DirEntry {
             path: key.clone(),
             left: l.map(|v| v.0),
             right: r.map(|v| v.0),
             status,
+            left_size,
+            right_size,
+            left_modified,
+            right_modified,
         });
     }
     Ok(entries)
@@ -345,5 +374,40 @@ mod tests {
         let e = compare_dirs(l.path(), r.path(), &DiffOptions::default()).unwrap();
         assert_eq!(status_of(&e, "same_size.txt"), DirStatus::Modified);
         assert!(quick_equal(&l.path().join("len.txt"), &l.path().join("missing")).is_err());
+    }
+
+    #[test]
+    fn reports_size_and_modified_time_for_files_only() {
+        let (l, r) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        fs::create_dir(l.path().join("sub")).unwrap();
+        fs::create_dir(r.path().join("sub")).unwrap();
+        fs::write(l.path().join("both.txt"), "12345").unwrap();
+        fs::write(r.path().join("both.txt"), "123").unwrap();
+        fs::write(l.path().join("left-only.txt"), "x").unwrap();
+        let old = std::time::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        fs::File::options().write(true).open(r.path().join("both.txt")).unwrap().set_modified(old).unwrap();
+        let e = compare_dirs(l.path(), r.path(), &DiffOptions::default()).unwrap();
+        let find = |p: &str| e.iter().find(|x| x.path == p).unwrap();
+        let both = find("both.txt");
+        assert_eq!((both.left_size, both.right_size), (Some(5), Some(3)));
+        assert_eq!(both.right_modified, Some(1_000_000_000));
+        assert!(both.left_modified.unwrap() > 1_000_000_000);
+        let lo = find("left-only.txt");
+        assert_eq!((lo.left_size, lo.right_size, lo.right_modified), (Some(1), None, None));
+        let sub = find("sub");
+        assert_eq!((sub.left_size, sub.right_size, sub.left_modified), (None, None, None));
+        // 片側だけの一覧にも付く
+        let single = list_dir(l.path(), false, &DiffOptions::default()).unwrap();
+        let b = single.iter().find(|x| x.path == "both.txt").unwrap();
+        assert_eq!((b.left_size, b.right_size), (None, Some(5)));
+        assert!(b.right_modified.is_some() && b.left_modified.is_none());
+        let a = list_dir(l.path(), true, &DiffOptions::default()).unwrap();
+        assert!(a.iter().find(|x| x.path == "both.txt").unwrap().left_size == Some(5));
+    }
+
+    #[test]
+    fn file_meta_tolerates_missing_files() {
+        assert_eq!(file_meta(None), (None, None));
+        assert_eq!(file_meta(Some(&(NodeKind::File, PathBuf::from("/nonexistent/x")))), (None, None));
     }
 }

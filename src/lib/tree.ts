@@ -6,6 +6,10 @@ export interface TreeNode {
   left: NodeKind | null;
   right: NodeKind | null;
   status: DirStatus;
+  leftSize: number | null;
+  rightSize: number | null;
+  leftModified: number | null;
+  rightModified: number | null;
   children: TreeNode[];
 }
 
@@ -25,6 +29,10 @@ export function buildTree(entries: DirEntry[]): TreeNode[] {
       left: e.left,
       right: e.right,
       status: e.status,
+      leftSize: e.left_size ?? null,
+      rightSize: e.right_size ?? null,
+      leftModified: e.left_modified ?? null,
+      rightModified: e.right_modified ?? null,
       children: [],
     };
     byPath.set(e.path, node);

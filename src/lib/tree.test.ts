@@ -69,3 +69,14 @@ describe("isVisible / collapsibleDirs", () => {
     expect(collapsibleDirs(tree)).toEqual(["sub"]);
   });
 });
+
+describe("buildTree metadata", () => {
+  it("carries sizes and modification times to the nodes (null when absent)", () => {
+    const [node, bare] = buildTree([
+      { path: "a.txt", left: "file", right: "file", status: "modified", left_size: 5, right_size: 3, left_modified: 100, right_modified: 50 },
+      { path: "b.txt", left: "file", right: "file", status: "same" },
+    ]);
+    expect([node.leftSize, node.rightSize, node.leftModified, node.rightModified]).toEqual([5, 3, 100, 50]);
+    expect([bare.leftSize, bare.rightSize, bare.leftModified, bare.rightModified]).toEqual([null, null, null, null]);
+  });
+});

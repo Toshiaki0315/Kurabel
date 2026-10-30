@@ -1688,6 +1688,7 @@ dependencies = [
  "chardetng",
  "encoding_rs",
  "hex",
+ "regex",
  "serde",
  "serde_json",
  "similar",

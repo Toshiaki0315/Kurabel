@@ -60,6 +60,8 @@ pub fn run() {
             commands::delete_entry,
             commands::make_patch,
             commands::write_patch,
+            commands::write_report,
+            commands::check_regex,
             commands::initial_paths,
             commands::merge3,
             commands::create_text

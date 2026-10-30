@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use similar::{capture_diff_slices_deadline, Algorithm, ChangeTag, DiffOp, TextDiff};
+use regex::{Regex, RegexBuilder};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -103,6 +104,8 @@ pub struct DiffOptions {
     pub ignore_comments: bool,
     /// 行コメントの開始文字列（例: `//`、`#`）
     pub comment_prefixes: Vec<String>,
+    /// この正規表現に一致する行を、比較から外す（例: `^\s*Last updated:`）。不正なパターンは無視する
+    pub ignore_line_patterns: Vec<String>,
     /// 移動した行（別の場所へ丸ごと移された連続行）を検出して印を付ける
     pub detect_moves: bool,
     /// フォルダ比較で除外するパターン（`*` と `?` が使える。`/` を含むものは相対パス、含まないものは名前に一致）
@@ -121,6 +124,7 @@ impl Default for DiffOptions {
             ignore_blank_lines: false,
             ignore_comments: false,
             comment_prefixes: vec!["//".to_string(), "#".to_string()],
+            ignore_line_patterns: Vec::new(),
             detect_moves: true,
             exclude: Vec::new(),
             recursive: true,
@@ -135,7 +139,16 @@ struct Line {
     ignorable: bool,
 }
 
-fn analyze(line: &str, options: &DiffOptions) -> Line {
+/// 正規表現を安全にコンパイルする。サイズ上限を設け、不正なものはエラーにする。
+pub fn compile_pattern(pattern: &str) -> Result<Regex, String> {
+    RegexBuilder::new(pattern).size_limit(1 << 20).build().map_err(|e| e.to_string())
+}
+
+fn analyze(line: &str, options: &DiffOptions, filters: &[Regex]) -> Line {
+    // フィルタに一致する行は、内容によらず同じ（空の）キーにして、互いに対応づける
+    if filters.iter().any(|f| f.is_match(line)) {
+        return Line { key: String::new(), ignorable: true };
+    }
     let mut body = line;
     let mut comment_only = false;
     if options.ignore_comments {
@@ -232,9 +245,10 @@ fn mark_moves(rows: &mut [DiffRow], old_keys: &[String], new_keys: &[String]) {
 pub fn diff_text(left: &str, right: &str, mode: DiffMode, options: &DiffOptions) -> Vec<DiffRow> {
     let old = split_lines(left);
     let new = split_lines(right);
+    let filters: Vec<Regex> = options.ignore_line_patterns.iter().filter_map(|p| compile_pattern(p).ok()).collect();
     let (old_lines, new_lines): (Vec<Line>, Vec<Line>) = (
-        old.iter().map(|l| analyze(l, options)).collect(),
-        new.iter().map(|l| analyze(l, options)).collect(),
+        old.iter().map(|l| analyze(l, options, &filters)).collect(),
+        new.iter().map(|l| analyze(l, options, &filters)).collect(),
     );
     let old_keys: Vec<String> = old_lines.iter().map(|l| l.key.clone()).collect();
     let new_keys: Vec<String> = new_lines.iter().map(|l| l.key.clone()).collect();
@@ -313,7 +327,7 @@ pub fn diff_text(left: &str, right: &str, mode: DiffMode, options: &DiffOptions)
             }
         }
     }
-    if options.ignore_blank_lines || options.ignore_comments {
+    if options.ignore_blank_lines || options.ignore_comments || !filters.is_empty() {
         let (old_ign, new_ign): (Vec<bool>, Vec<bool>) =
             (old_lines.iter().map(|l| l.ignorable).collect(), new_lines.iter().map(|l| l.ignorable).collect());
         neutralize_ignorable(&mut rows, &old_ign, &new_ign);
@@ -531,5 +545,38 @@ mod tests {
         let o: DiffOptions = serde_json::from_str("{}").unwrap();
         assert!(o.detect_moves && !o.ignore_blank_lines && !o.ignore_comments);
         assert_eq!(o.comment_prefixes, vec!["//".to_string(), "#".to_string()]);
+    }
+
+    #[test]
+    fn ignore_line_patterns_skip_matching_lines_on_both_sides() {
+        let opts = DiffOptions { ignore_line_patterns: vec![r"^\s*Last updated:".into(), r"\$Id.*\$".into()], ..Default::default() };
+        let left = "title\nLast updated: 2024-01-01\nbody $Id: 1 $\nend\n";
+        let right = "title\n  Last updated: 2025-12-31\nbody $Id: 2 $\nend\n";
+        let rows = diff_text(left, right, DiffMode::Line, &opts);
+        assert!(rows.iter().all(|r| r.kind == RowKind::Equal), "{rows:?}");
+        // 表示は元の行のまま
+        assert_eq!(rows[1].left.as_ref().unwrap().segments[0].text, "Last updated: 2024-01-01");
+        assert_eq!(rows[1].right.as_ref().unwrap().segments[0].text, "  Last updated: 2025-12-31");
+        // パターンなしなら差分
+        assert!(dt(left, right, DiffMode::Line).iter().any(|r| r.kind != RowKind::Equal));
+        // 一致しない行の変更は残る
+        let rows = diff_text("title\nx\n", "title\ny\n", DiffMode::Line, &opts);
+        assert_eq!(kinds(&rows), vec![RowKind::Equal, RowKind::Replace]);
+    }
+
+    #[test]
+    fn a_filtered_line_that_exists_on_only_one_side_is_not_a_difference() {
+        let opts = DiffOptions { ignore_line_patterns: vec!["^#".into()], ..Default::default() };
+        let rows = diff_text("a\n# note\nb\n", "a\nb\n", DiffMode::Line, &opts);
+        assert!(rows.iter().all(|r| r.kind == RowKind::Equal));
+    }
+
+    #[test]
+    fn invalid_or_oversized_patterns_are_ignored_and_reported_by_compile_pattern() {
+        assert!(compile_pattern("(unclosed").is_err());
+        assert!(compile_pattern(r"a{1000}{1000}{1000}").is_err());
+        assert!(compile_pattern(r"^\d+$").is_ok());
+        let opts = DiffOptions { ignore_line_patterns: vec!["(unclosed".into()], ..Default::default() };
+        assert!(diff_text("a\n", "b\n", DiffMode::Line, &opts).iter().any(|r| r.kind != RowKind::Equal));
     }
 }

@@ -91,14 +91,15 @@ pub fn delete_entry(root: &Path, rel: &str) -> Result<(), String> {
     result.map_err(|e| format!("{}: {e}", target.display()))
 }
 
-/// パッチを書き出す。拡張子は `.patch` / `.diff` / `.txt` のみ、既存の通常ファイルへの上書きまたは新規作成。
-pub fn write_patch(path: &Path, content: &str) -> Result<(), String> {
+/// 書き出し用の共通処理。拡張子を限定し、既存の通常ファイルへの上書きまたは新規作成のみ許可する。
+fn write_export(path: &Path, content: &str, allowed: &[&str], what: &str) -> Result<(), String> {
     let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-    if !["patch", "diff", "txt"].contains(&ext.as_str()) {
-        return Err("パッチの拡張子は .patch / .diff / .txt のいずれかにしてください".to_string());
+    if !allowed.contains(&ext.as_str()) {
+        let list = allowed.iter().map(|e| format!(".{e}")).collect::<Vec<_>>().join(" / ");
+        return Err(format!("{what}の拡張子は {list} のいずれかにしてください"));
     }
     if content.len() as u64 > MAX_FILE_SIZE {
-        return Err("パッチが大きすぎます".to_string());
+        return Err(format!("{what}が大きすぎます"));
     }
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
     if classify(parent)? != PathKind::Directory {
@@ -110,6 +111,16 @@ pub fn write_patch(path: &Path, content: &str) -> Result<(), String> {
         }
     }
     fs::write(path, content).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// パッチを書き出す（`.patch` / `.diff` / `.txt` のみ）。
+pub fn write_patch(path: &Path, content: &str) -> Result<(), String> {
+    write_export(path, content, &["patch", "diff", "txt"], "パッチ")
+}
+
+/// 比較レポートを書き出す（`.html` / `.htm` のみ）。
+pub fn write_report(path: &Path, content: &str) -> Result<(), String> {
+    write_export(path, content, &["html", "htm"], "レポート")
 }
 
 /// コマンドライン引数から比較対象のパス（最大2つ）を取り出す。相対パスは `cwd` 基準で絶対パスにする。
@@ -224,6 +235,20 @@ mod tests {
         let big = "a".repeat(MAX_FILE_SIZE as usize + 1);
         assert!(write_patch(&p, &big).is_err());
         assert!(write_patch(Path::new("relative-in-cwd-missing-dir/x.patch"), "x").is_err());
+    }
+
+    #[test]
+    fn writes_reports_with_html_extensions_only() {
+        let d = tempfile::tempdir().unwrap();
+        write_report(&d.path().join("r.html"), "<p>x</p>").unwrap();
+        write_report(&d.path().join("R.HTM"), "<p>x</p>").unwrap();
+        assert_eq!(fs::read_to_string(d.path().join("r.html")).unwrap(), "<p>x</p>");
+        for bad in ["r.patch", "r.sh", "noext", "r.html.exe"] {
+            assert!(write_report(&d.path().join(bad), "x").unwrap_err().contains(".html"), "{bad}");
+        }
+        assert!(write_report(&d.path().join("missing/r.html"), "x").is_err());
+        // パッチ用の拡張子はレポートでは使えず、逆も同じ
+        assert!(write_patch(&d.path().join("r.html"), "x").is_err());
     }
 
     #[test]

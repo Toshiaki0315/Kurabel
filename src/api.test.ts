@@ -15,6 +15,7 @@ import {
   comparePaths,
   confirmAction,
   confirmDiscard,
+  checkRegex,
   copyEntry,
   createText,
   deleteEntry,
@@ -26,9 +27,11 @@ import {
   pathKind,
   pickPatchPath,
   pickPath,
+  pickReportPath,
   pickSavePath,
   saveText,
   writePatch,
+  writeReport,
 } from "./api";
 import { AUTO_ENCODING, DEFAULT_OPTIONS } from "./types";
 
@@ -138,5 +141,16 @@ describe("api", () => {
       invoke.mockResolvedValueOnce({ kind: "directory", entries: [] });
       expect((await comparePaths("/a", "/b", "line", DEFAULT_OPTIONS)).kind).toBe("directory");
     });
+  });
+
+  it("wraps the report writer, its save dialog and the regex check", async () => {
+    invoke.mockResolvedValue(undefined);
+    await writeReport("/r.html", "<p/>");
+    expect(invoke).toHaveBeenLastCalledWith("write_report", { path: "/r.html", content: "<p/>" });
+    await checkRegex("^a");
+    expect(invoke).toHaveBeenLastCalledWith("check_regex", { pattern: "^a" });
+    save.mockResolvedValue("/chosen.html");
+    expect(await pickReportPath("x.html")).toBe("/chosen.html");
+    expect(save).toHaveBeenLastCalledWith({ defaultPath: "x.html", filters: [{ name: "HTML レポート", extensions: ["html", "htm"] }] });
   });
 });

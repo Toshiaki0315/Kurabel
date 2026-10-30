@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { parseExclude, type Settings } from "../lib/settings";
+import { useEffect, useRef, useState } from "react";
+import { checkRegex } from "../api";
+import { parseExclude, parseLines, type Settings } from "../lib/settings";
 import type { DiffMode, DiffOptions } from "../types";
 
 interface Props {
@@ -24,6 +25,16 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
   }, [onClose]);
 
   const [prefixText, setPrefixText] = useState(settings.options.comment_prefixes.join(", "));
+  const [regexText, setRegexText] = useState(settings.options.ignore_line_patterns.join("\n"));
+  const [regexErrors, setRegexErrors] = useState<string[]>([]);
+  const regexRun = useRef(0);
+  // 正規表現が有効か、入力のたびにバックエンド（実際に使うエンジン）で確認する
+  const validateRegexes = (patterns: string[]) => {
+    const run = ++regexRun.current;
+    void Promise.all(patterns.map((p) => checkRegex(p).then(() => null, (e) => `${p}: ${e}`))).then((results) => {
+      if (run === regexRun.current) setRegexErrors(results.filter((r): r is string => r !== null));
+    });
+  };
   const [excludeText, setExcludeText] = useState(settings.options.exclude.join("\n"));
   const update = (patch: Partial<DiffOptions>) => onChange({ ...settings, options: { ...settings.options, ...patch } });
 
@@ -75,6 +86,29 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
               }}
             />
           </label>
+          <label className="stack">
+            無視する行のパターン（正規表現）
+            <textarea
+              aria-label="無視する行のパターン"
+              rows={2}
+              placeholder={"^\\s*Last updated:\n\\$Id.*\\$"}
+              value={regexText}
+              onChange={(e) => {
+                setRegexText(e.target.value);
+                const patterns = parseLines(e.target.value);
+                update({ ignore_line_patterns: patterns });
+                validateRegexes(patterns);
+              }}
+            />
+            <small>1行に1パターン。一致した行は、差分として扱いません</small>
+          </label>
+          {regexErrors.length > 0 && (
+            <ul role="alert" className="error regex-errors">
+              {regexErrors.map((m) => (
+                <li key={m}>無効な正規表現 — {m}</li>
+              ))}
+            </ul>
+          )}
         </fieldset>
         <fieldset>
           <legend>表示</legend>

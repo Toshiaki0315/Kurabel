@@ -1,7 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../lib/settings";
 import { DEFAULT_OPTIONS } from "../types";
+const checkRegex = vi.fn();
+vi.mock("../api", () => ({ checkRegex: (...a: unknown[]) => checkRegex(...a) }));
+
 import { SettingsDialog } from "./SettingsDialog";
 
 const setup = (settings = DEFAULT_SETTINGS) => {
@@ -81,5 +84,46 @@ describe("SettingsDialog", () => {
       options: { ...DEFAULT_OPTIONS, ignore_comments: true, comment_prefixes: ["--", ";", "rem"] },
     });
     expect(prefixes.value).toBe("--, ; ,rem ");
+  });
+
+  describe("line-ignore patterns (regular expressions)", () => {
+    beforeEach(() => checkRegex.mockReset());
+
+    it("keeps commas and spaces, one pattern per line, and validates each with the backend", async () => {
+      checkRegex.mockResolvedValue(undefined);
+      const { onChange } = setup({ ...DEFAULT_SETTINGS, options: { ...DEFAULT_OPTIONS, ignore_line_patterns: ["^#"] } });
+      const box = screen.getByLabelText("無視する行のパターン") as HTMLTextAreaElement;
+      expect(box.value).toBe("^#");
+      fireEvent.change(box, { target: { value: "^#\nLast, updated: \\d+" } });
+      expect(onChange).toHaveBeenLastCalledWith({
+        ...DEFAULT_SETTINGS,
+        options: { ...DEFAULT_OPTIONS, ignore_line_patterns: ["^#", "Last, updated: \\d+"] },
+      });
+      await waitFor(() => expect(checkRegex).toHaveBeenCalledTimes(2));
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("lists the invalid patterns with the reason", async () => {
+      checkRegex.mockImplementation((p: string) => (p === "(" ? Promise.reject("unclosed group") : Promise.resolve()));
+      setup();
+      fireEvent.change(screen.getByLabelText("無視する行のパターン"), { target: { value: "ok\n(" } });
+      expect(await screen.findByRole("alert")).toHaveTextContent("無効な正規表現 — (: unclosed group");
+      fireEvent.change(screen.getByLabelText("無視する行のパターン"), { target: { value: "ok" } });
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    });
+
+    it("ignores a stale validation result that arrives after a newer one", async () => {
+      let rejectFirst: (e: string) => void = () => {};
+      checkRegex.mockImplementationOnce(() => new Promise((_, reject) => (rejectFirst = reject)));
+      checkRegex.mockResolvedValue(undefined);
+      setup();
+      const box = screen.getByLabelText("無視する行のパターン");
+      fireEvent.change(box, { target: { value: "(" } });
+      fireEvent.change(box, { target: { value: "ok" } });
+      await waitFor(() => expect(checkRegex).toHaveBeenCalledTimes(2));
+      rejectFirst("late failure");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
   });
 });

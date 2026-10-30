@@ -32,7 +32,7 @@ mark.chg, .chg { background: var(--chg); color: inherit; }
 .mono .ascii { width: 17ch; }
 .mono .hex .byte { margin-right: .4em; }
 .dir-row { display: grid; grid-template-columns: 1fr var(--mid) 1fr; border-bottom: 1px solid #8882; }
-.dir-cell { padding: 2px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir-cell { padding: 2px 8px; overflow: hidden; white-space: nowrap; display: flex; gap: 8px; align-items: center; }
 .dir-status { padding: 2px 0; text-align: center; opacity: .8; }
 .st-added { background: var(--add); }
 .st-removed { background: var(--del); }
@@ -114,3 +114,8 @@ main { position: relative; }
 .diff-table.virtual tr { height: 18px; }
 .diff-table.virtual td.merge { white-space: nowrap; }
 .diff-table.virtual td.merge button { padding: 0 4px; margin: 0 1px; font-size: 11px; line-height: 16px; }
+.dir-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dir-size { width: 5.5em; text-align: right; opacity: .75; flex: none; }
+.dir-date { width: 9.5em; opacity: .75; flex: none; }
+.dir-date.newer { font-weight: 700; opacity: 1; }
+.regex-errors { margin: 0; padding-left: 20px; font-size: 12px; }

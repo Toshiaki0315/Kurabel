@@ -17,6 +17,14 @@ export function parseExclude(text: string): string[] {
     .filter((s) => s !== "");
 }
 
+/** 正規表現の入力欄（1行に1パターン）を配列にする。カンマや空白は正規表現の一部なので、区切りには使わない。 */
+export function parseLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((s) => s.replace(/\r$/, ""))
+    .filter((s) => s !== "");
+}
+
 export function loadSettings(): Settings {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? "null");
@@ -31,6 +39,9 @@ export function loadSettings(): Settings {
         comment_prefixes: Array.isArray(o?.comment_prefixes)
           ? o.comment_prefixes.filter((x: unknown): x is string => typeof x === "string")
           : DEFAULT_OPTIONS.comment_prefixes,
+        ignore_line_patterns: Array.isArray(o?.ignore_line_patterns)
+          ? o.ignore_line_patterns.filter((x: unknown): x is string => typeof x === "string")
+          : [],
         detect_moves: o?.detect_moves !== false,
         exclude: Array.isArray(o?.exclude) ? o.exclude.filter((x: unknown): x is string => typeof x === "string") : [],
         recursive: o?.recursive !== false,
