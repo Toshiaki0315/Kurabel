@@ -1,0 +1,30 @@
+:root { color-scheme: light dark; font-family: system-ui, "Hiragino Sans", sans-serif; --add:#d1f5d8; --del:#ffd7d5; --mod:#fff3bf; --chg:#ffb454; }
+@media (prefers-color-scheme: dark) { :root { --add:#1e4620; --del:#5a1e1e; --mod:#5a4b10; --chg:#a15c00; } }
+body { margin: 0; }
+.app { display: flex; flex-direction: column; height: 100vh; }
+.toolbar { display: flex; gap: 16px; padding: 8px 12px; border-bottom: 1px solid #8884; flex-wrap: wrap; align-items: center; }
+.picker { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.path { max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; }
+main { flex: 1; overflow: auto; }
+.bar { display: flex; gap: 12px; align-items: center; padding: 6px 12px; position: sticky; top: 0; background: Canvas; border-bottom: 1px solid #8884; }
+.error { color: #d33; padding: 6px 12px; }
+.empty { padding: 32px; text-align: center; opacity: .7; }
+.diff-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+.diff-table td { vertical-align: top; white-space: pre-wrap; word-break: break-all; padding: 0 6px; }
+.diff-table .ln { width: 4.5em; text-align: right; opacity: .55; user-select: none; }
+.row-insert .right { background: var(--add); }
+.row-delete .left { background: var(--del); }
+.row-replace .code { background: var(--mod); }
+.row-insert .left, .row-delete .right { background: #8881; }
+mark.chg, .chg { background: var(--chg); color: inherit; }
+.edit-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px; height: calc(100% - 50px); }
+.edit-panes textarea { font-family: ui-monospace, Menlo, monospace; font-size: 13px; min-height: 60vh; }
+.mono .hex .byte { margin-right: .5em; }
+.mono .hex, .mono .ascii { width: 24%; }
+.dir-row { display: grid; grid-template-columns: 1fr 1fr 5em; border-bottom: 1px solid #8882; }
+.dir-cell { padding: 2px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir-status { padding: 2px 8px; opacity: .8; }
+.st-added { background: var(--add); }
+.st-removed { background: var(--del); }
+.st-modified { background: var(--mod); }
+button.link { background: none; border: 0; padding: 0; color: LinkText; cursor: pointer; font: inherit; }

@@ -10,7 +10,6 @@ lerna-debug.log*
 
 # Rust / Tauri
 src-tauri/target/
-src-tauri/Cargo.lock
 
 # Testing / Coverage
 coverage/
@@ -34,3 +33,4 @@ coverage/
 *.p8
 *.cer
 *.mobileprovision
+src-tauri/gen/

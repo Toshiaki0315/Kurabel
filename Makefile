@@ -16,9 +16,11 @@ dmg:
 # テスト実行
 test:
 	npm run test
+	mkdir -p dist
 	cd src-tauri && cargo test
 
 # カバレッジ測定
 coverage:
 	npm run coverage
-	cd src-tauri && cargo llvm-cov --all-features --workspace
+	mkdir -p dist
+	cd src-tauri && cargo llvm-cov --all-features --workspace --ignore-filename-regex '(main|lib)\.rs' --fail-under-lines 90
