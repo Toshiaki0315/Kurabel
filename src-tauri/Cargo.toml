@@ -1,0 +1,22 @@
+[package]
+name = "kurabel"
+version = "0.1.0"
+description = "Diff & Merge Tool"
+authors = ["Toshiaki0315"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+tauri-plugin-shell = "2.0.0"
+tauri-plugin-dialog = "2.0.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+similar = "2.3.0" # 差分検出用ライブラリ
+hex = "0.4.3" # バイナリ処理用
+walkdir = "2.4.0" # ディレクトリトラバーサル用
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
