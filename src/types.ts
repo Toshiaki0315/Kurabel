@@ -3,9 +3,31 @@ export type DiffMode = "line" | "word";
 export interface DiffOptions {
   ignore_whitespace: boolean;
   ignore_case: boolean;
+  /** フォルダ比較で除外するパターン（`*` と `?` が使える） */
+  exclude: string[];
+  /** フォルダ比較でサブフォルダも含める */
+  recursive: boolean;
+  /** フォルダ比較を内容ではなくサイズと更新日時で判定する（高速） */
+  quick: boolean;
 }
 
-export const DEFAULT_OPTIONS: DiffOptions = { ignore_whitespace: false, ignore_case: false };
+export const DEFAULT_OPTIONS: DiffOptions = {
+  ignore_whitespace: false,
+  ignore_case: false,
+  exclude: [],
+  recursive: true,
+  quick: false,
+};
+
+/** ファイルごとの文字コードの手動指定（null = 自動判定） */
+export interface EncodingChoice {
+  left: string | null;
+  right: string | null;
+}
+
+export const AUTO_ENCODING: EncodingChoice = { left: null, right: null };
+
+export const ENCODINGS = ["UTF-8", "Shift_JIS", "EUC-JP", "ISO-2022-JP", "UTF-16LE", "UTF-16BE", "windows-1252"];
 export type RowKind = "equal" | "insert" | "delete" | "replace";
 
 export interface Segment {

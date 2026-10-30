@@ -86,13 +86,25 @@ pub fn plain_rows(text: &str, left_side: bool) -> Vec<DiffRow> {
         .collect()
 }
 
-/// 比較時に無視する差の種類。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// 比較時のオプション（テキストの無視設定と、フォルダ比較の設定）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DiffOptions {
     /// 行頭・行末の空白と、連続する空白の量の違いを無視する
     pub ignore_whitespace: bool,
     pub ignore_case: bool,
+    /// フォルダ比較で除外するパターン（`*` と `?` が使える。`/` を含むものは相対パス、含まないものは名前に一致）
+    pub exclude: Vec<String>,
+    /// フォルダ比較でサブフォルダも含めるか
+    pub recursive: bool,
+    /// フォルダ比較で内容ではなくサイズと更新日時で判定するか（高速）
+    pub quick: bool,
+}
+
+impl Default for DiffOptions {
+    fn default() -> Self {
+        DiffOptions { ignore_whitespace: false, ignore_case: false, exclude: Vec::new(), recursive: true, quick: false }
+    }
 }
 
 fn normalize(line: &str, options: &DiffOptions) -> String {
@@ -105,6 +117,11 @@ fn normalize(line: &str, options: &DiffOptions) -> String {
         key = key.to_lowercase();
     }
     key
+}
+
+/// unified diff 形式のパッチ文字列を作る（差分がなければ空文字列）。
+pub fn unified_patch(left: &str, right: &str, left_label: &str, right_label: &str) -> String {
+    TextDiff::from_lines(left, right).unified_diff().context_radius(3).header(left_label, right_label).to_string()
 }
 
 pub fn diff_text(left: &str, right: &str, mode: DiffMode, options: &DiffOptions) -> Vec<DiffRow> {
@@ -275,6 +292,7 @@ mod tests {
     fn options_default_when_fields_are_missing() {
         let o: DiffOptions = serde_json::from_str("{}").unwrap();
         assert_eq!(o, DiffOptions::default());
+        assert!(o.recursive && !o.quick && o.exclude.is_empty());
         let o: DiffOptions = serde_json::from_str("{\"ignore_case\":true}").unwrap();
         assert!(o.ignore_case && !o.ignore_whitespace);
     }
@@ -288,5 +306,13 @@ mod tests {
         let rows = plain_rows("x", false);
         assert!(rows[0].left.is_none() && rows[0].right.is_some());
         assert!(plain_rows("", true).is_empty());
+    }
+
+    #[test]
+    fn unified_patch_has_headers_and_hunks() {
+        let patch = unified_patch("a\nb\nc\n", "a\nB\nc\n", "left.txt", "right.txt");
+        assert!(patch.starts_with("--- left.txt\n+++ right.txt\n"));
+        assert!(patch.contains("-b\n+B\n"));
+        assert_eq!(unified_patch("same\n", "same\n", "a", "b"), "");
     }
 }

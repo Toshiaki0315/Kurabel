@@ -68,3 +68,22 @@ button.toggle { background: none; border: 0; padding: 0 6px 0 0; cursor: pointer
 .dialog fieldset { border: 1px solid #8884; border-radius: 6px; margin: 0 0 12px; display: flex; flex-direction: column; gap: 6px; }
 .dialog label { display: flex; gap: 6px; align-items: center; }
 .dialog-actions { display: flex; justify-content: flex-end; }
+.main-wrap { flex: 1; display: flex; min-height: 0; }
+.main-wrap > main { flex: 1; min-width: 0; }
+.overview-slot { width: 14px; position: relative; border-left: 1px solid #8884; flex: none; }
+.overview { position: absolute; inset: 0; }
+.ov-mark { position: absolute; left: 2px; right: 2px; min-height: 3px; padding: 0; border: 0; border-radius: 1px; cursor: pointer; background: var(--mod); outline: 1px solid #8886; }
+.ov-insert { background: var(--add); }
+.ov-delete { background: var(--del); }
+.ov-mark.current { outline: 2px solid #38f; }
+.pane-headers { padding-right: 14px; }
+.find { display: flex; gap: 6px; align-items: center; }
+.find input[type="search"] { width: 12em; }
+mark.find-hit { background: #5af8; color: inherit; outline: 1px solid #38f; }
+td.find-hit-cell { outline: 2px solid #38f; outline-offset: -2px; }
+.dir-row.selected { outline: 2px solid #38f8; outline-offset: -2px; }
+.dir-row { cursor: default; }
+.dialog label.stack { flex-direction: column; align-items: stretch; }
+.dialog textarea { font: 13px ui-monospace, Menlo, monospace; resize: vertical; }
+.dialog small { opacity: .7; }
+.picker select { max-width: 14em; }

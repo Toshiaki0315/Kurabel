@@ -9,14 +9,26 @@ export const DEFAULT_SETTINGS: Settings = { mode: "line", options: DEFAULT_OPTIO
 
 const KEY = "kurabel.settings";
 
+/** 除外パターンの入力欄（改行・カンマ区切り）を配列にする。 */
+export function parseExclude(text: string): string[] {
+  return text
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+}
+
 export function loadSettings(): Settings {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? "null");
+    const o = v?.options;
     return {
       mode: v?.mode === "word" ? "word" : "line",
       options: {
-        ignore_whitespace: v?.options?.ignore_whitespace === true,
-        ignore_case: v?.options?.ignore_case === true,
+        ignore_whitespace: o?.ignore_whitespace === true,
+        ignore_case: o?.ignore_case === true,
+        exclude: Array.isArray(o?.exclude) ? o.exclude.filter((x: unknown): x is string => typeof x === "string") : [],
+        recursive: o?.recursive !== false,
+        quick: o?.quick === true,
       },
     };
   } catch {
@@ -31,3 +43,5 @@ export function saveSettings(settings: Settings): void {
     // 保存できなくても動作には影響しない
   }
 }
+
+export type { DiffOptions };

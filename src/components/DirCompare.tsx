@@ -13,10 +13,12 @@ interface NodeProps {
   collapsed: Set<string>;
   onToggle: (path: string) => void;
   onOpen: (path: string) => void;
+  selected: string | null;
+  onSelect: (path: string) => void;
 }
 
 function Node(props: NodeProps) {
-  const { node, depth, filter, query, collapsed, onToggle, onOpen } = props;
+  const { node, depth, filter, query, collapsed, onToggle, onOpen, selected, onSelect } = props;
   if (!isVisible(node, filter, query)) return null;
   const dir = isDirNode(node);
   const expandable = dir && node.children.length > 0;
@@ -29,7 +31,7 @@ function Node(props: NodeProps) {
     present && (openable ? <button className="link" onClick={() => onOpen(node.path)}>{name}</button> : name);
   return (
     <>
-      <div className={`dir-row st-${node.status}`} role="treeitem" aria-label={node.path} aria-expanded={expandable ? open : undefined}>
+      <div className={`dir-row st-${node.status}${selected === node.path ? " selected" : ""}`} onClick={() => onSelect(node.path)} role="treeitem" aria-label={node.path} aria-expanded={expandable ? open : undefined}>
         <div className="dir-cell" style={pad}>
           {expandable && (
             <button className="toggle" aria-label={`${node.path}を${open ? "閉じる" : "開く"}`} onClick={() => onToggle(node.path)}>
@@ -50,10 +52,21 @@ function Node(props: NodeProps) {
 }
 
 /** single: 1つだけ開いている（比較しないので差分件数は出さない） */
-export function DirCompare(props: { entries: DirEntry[]; onOpen: (relPath: string) => void; single?: boolean }) {
+interface DirCompareProps {
+  entries: DirEntry[];
+  onOpen: (relPath: string) => void;
+  single?: boolean;
+  /** 選択した項目を反対側へコピー（overwrite: コピー先に同名の項目がある） */
+  onCopy?: (relPath: string, from: "left" | "right", overwrite: boolean) => void;
+  onDelete?: (relPath: string, side: "left" | "right") => void;
+}
+
+export function DirCompare(props: DirCompareProps) {
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<string | null>(null);
+  const sel = props.entries.find((e) => e.path === selected);
   const tree = useMemo(() => buildTree(props.entries), [props.entries]);
   const toggle = (path: string) =>
     setCollapsed((cur) => {
@@ -77,11 +90,27 @@ export function DirCompare(props: { entries: DirEntry[]; onOpen: (relPath: strin
         <input type="search" aria-label="名前で絞り込み" placeholder="名前で絞り込み" value={query} onChange={(e) => setQuery(e.target.value)} />
         <button onClick={() => setCollapsed(new Set())}>すべて開く</button>
         <button onClick={() => setCollapsed(new Set(collapsibleDirs(tree)))}>すべて閉じる</button>
+        {!props.single && (
+          <>
+            <button disabled={!sel?.left} onClick={() => sel && props.onCopy?.(sel.path, "left", sel.right !== null)}>
+              → 右へコピー
+            </button>
+            <button disabled={!sel?.right} onClick={() => sel && props.onCopy?.(sel.path, "right", sel.left !== null)}>
+              ← 左へコピー
+            </button>
+            <button disabled={!sel?.left} onClick={() => sel && props.onDelete?.(sel.path, "left")}>
+              左を削除
+            </button>
+            <button disabled={!sel?.right} onClick={() => sel && props.onDelete?.(sel.path, "right")}>
+              右を削除
+            </button>
+          </>
+        )}
         {!props.single && <span className="summary">{props.entries.filter((e) => e.status !== "same").length} 件の差分</span>}
       </ToolbarPortal>
       <div role="tree" className="dir-tree">
         {tree.map((n) => (
-          <Node key={n.path} node={n} depth={0} filter={filter} query={query} collapsed={collapsed} onToggle={toggle} onOpen={props.onOpen} />
+          <Node key={n.path} node={n} depth={0} filter={filter} query={query} collapsed={collapsed} onToggle={toggle} onOpen={props.onOpen} selected={selected} onSelect={setSelected} />
         ))}
       </div>
     </section>

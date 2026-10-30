@@ -5,14 +5,21 @@ import type { DiffRow } from "../types";
 
 const diffText = vi.fn();
 const saveText = vi.fn();
+const makePatch = vi.fn();
+const pickPatchPath = vi.fn();
+const writePatch = vi.fn();
 vi.mock("../api", () => ({
+  makePatch: (...a: unknown[]) => makePatch(...a),
+  pickPatchPath: (...a: unknown[]) => pickPatchPath(...a),
+  writePatch: (...a: unknown[]) => writePatch(...a),
   diffText: (...a: unknown[]) => diffText(...a),
   saveText: (...a: unknown[]) => saveText(...a),
 }));
 
+import { DEFAULT_OPTIONS } from "../types";
 import { TextCompare } from "./TextCompare";
 
-const OPTS = { ignore_whitespace: false, ignore_case: false };
+const OPTS = DEFAULT_OPTIONS;
 const SJIS = { name: "Shift_JIS", bom: false };
 const UTF8 = { name: "UTF-8", bom: false };
 const seg = (text: string, changed = false) => ({ text, changed });
@@ -40,6 +47,9 @@ describe("TextCompare", () => {
   beforeEach(() => {
     diffText.mockReset();
     saveText.mockReset();
+    makePatch.mockReset();
+    pickPatchPath.mockReset();
+    writePatch.mockReset();
   });
 
   it("renders line numbers, text, highlights and the diff count in view mode", () => {
@@ -237,8 +247,8 @@ describe("TextCompare", () => {
   it("re-diffs when the compare options change", async () => {
     diffText.mockResolvedValue([]);
     const { rerender } = setup("line");
-    rerender(<TextCompare leftText={"same\na old"} rightText={"same\na new"} rows={rows} mode="line" options={{ ignore_whitespace: true, ignore_case: false }} leftPath="/l.txt" rightPath="/r.txt" leftEncoding={SJIS} rightEncoding={UTF8} />);
-    await waitFor(() => expect(diffText).toHaveBeenCalledWith("same\na old", "same\na new", "line", { ignore_whitespace: true, ignore_case: false }));
+    rerender(<TextCompare leftText={"same\na old"} rightText={"same\na new"} rows={rows} mode="line" options={{ ...OPTS, ignore_whitespace: true }} leftPath="/l.txt" rightPath="/r.txt" leftEncoding={SJIS} rightEncoding={UTF8} />);
+    await waitFor(() => expect(diffText).toHaveBeenCalledWith("same\na old", "same\na new", "line", { ...OPTS, ignore_whitespace: true }));
   });
 
   it("reports unsaved changes and clears the flag on unmount", async () => {
@@ -286,5 +296,120 @@ describe("TextCompare", () => {
     rerender(<TextCompare leftText="only" rightText="" rows={[]} mode="word" options={OPTS} leftPath="/l" rightPath={null} leftEncoding={UTF8} rightEncoding={UTF8} />);
     await new Promise((r) => setTimeout(r, 50));
     expect(diffText).not.toHaveBeenCalled();
+  });
+
+  describe("search", () => {
+    const cell = (n: number, text: string) => ({ line_no: n, segments: [{ text, changed: false }] });
+    const srows: DiffRow[] = [
+      { kind: "equal", left: cell(1, "Foo one"), right: cell(1, "Foo one") },
+      { kind: "replace", left: cell(2, "two foo"), right: cell(2, "two") },
+    ];
+    const ssetup = () =>
+      render(<TextCompare leftText={"Foo one\ntwo foo"} rightText={"Foo one\ntwo"} rows={srows} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+
+    it("opens with Cmd/Ctrl+F, counts matches, steps through them with Enter and the buttons", () => {
+      const { container } = ssetup();
+      expect(screen.queryByLabelText("検索")).toBeNull();
+      fireEvent.keyDown(window, { key: "f", metaKey: true });
+      const input = screen.getByLabelText("検索");
+      fireEvent.change(input, { target: { value: "foo" } });
+      expect(screen.getByText("1 / 3")).toBeInTheDocument();
+      expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-left-line", "1");
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(screen.getByText("2 / 3")).toBeInTheDocument();
+      expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-left-line", "2");
+      fireEvent.click(screen.getByRole("button", { name: "次の一致" }));
+      expect(screen.getByText("3 / 3")).toBeInTheDocument();
+      expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-right-line", "1");
+      fireEvent.click(screen.getByRole("button", { name: "次の一致" }));
+      expect(screen.getByText("1 / 3")).toBeInTheDocument(); // 一巡
+      fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+      expect(screen.getByText("3 / 3")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "前の一致" }));
+      expect(screen.getByText("2 / 3")).toBeInTheDocument();
+      fireEvent.keyDown(input, { key: "a" });
+    });
+
+    it("says when nothing is found, and closes with Escape or the button", () => {
+      ssetup();
+      fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+      fireEvent.change(screen.getByLabelText("検索"), { target: { value: "zzz" } });
+      expect(screen.getByText("見つかりません")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "次の一致" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "次の一致" }));
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(screen.queryByLabelText("検索")).toBeNull();
+      fireEvent.keyDown(window, { key: "Escape" }); // 閉じているときは何もしない
+      fireEvent.keyDown(window, { key: "f", metaKey: true });
+      fireEvent.click(screen.getByRole("button", { name: "検索を閉じる" }));
+      expect(screen.queryByLabelText("検索")).toBeNull();
+    });
+
+    it("marks the match inside the editor in edit mode and survives an empty query", () => {
+      const { container } = ssetup();
+      fireEvent.click(screen.getByText("編集"));
+      fireEvent.keyDown(window, { key: "f", metaKey: true });
+      fireEvent.change(screen.getByLabelText("検索"), { target: { value: "two" } });
+      expect(container.querySelector("mark.find-hit")!.textContent).toBe("two");
+      fireEvent.change(screen.getByLabelText("検索"), { target: { value: "" } });
+      expect(container.querySelector("mark.find-hit")).toBeNull();
+    });
+
+    it("is not available for a single opened file", () => {
+      render(<TextCompare leftText="a" rightText="" rows={[]} mode="line" options={OPTS} leftPath="/l" rightPath={null} leftEncoding={UTF8} rightEncoding={UTF8} />);
+      fireEvent.keyDown(window, { key: "f", metaKey: true });
+      expect(screen.queryByLabelText("検索")).toBeNull();
+    });
+  });
+
+  describe("patch export", () => {
+    it("builds a patch from the current texts and saves it where the user chooses", async () => {
+      makePatch.mockResolvedValue("--- a\n+++ b\n");
+      pickPatchPath.mockResolvedValue("/out/x.patch");
+      writePatch.mockResolvedValue(undefined);
+      setup();
+      fireEvent.click(screen.getByText("パッチを保存…"));
+      await waitFor(() => expect(writePatch).toHaveBeenCalledWith("/out/x.patch", "--- a\n+++ b\n"));
+      expect(makePatch).toHaveBeenCalledWith("same\na old", "same\na new", "/l.txt", "/r.txt");
+      expect(pickPatchPath).toHaveBeenCalledWith("l.txt.patch");
+      expect(await screen.findByText("パッチを保存しました")).toBeInTheDocument();
+    });
+
+    it("does nothing when the save dialog is cancelled", async () => {
+      makePatch.mockResolvedValue("--- a\n");
+      pickPatchPath.mockResolvedValue(null);
+      setup();
+      fireEvent.click(screen.getByText("パッチを保存…"));
+      await waitFor(() => expect(pickPatchPath).toHaveBeenCalled());
+      expect(writePatch).not.toHaveBeenCalled();
+    });
+
+    it("tells the user when there is no difference", async () => {
+      makePatch.mockResolvedValue("");
+      setup();
+      fireEvent.click(screen.getByText("パッチを保存…"));
+      expect(await screen.findByText(/パッチは作成しませんでした/)).toBeInTheDocument();
+      expect(pickPatchPath).not.toHaveBeenCalled();
+    });
+
+    it("shows an error when saving fails", async () => {
+      makePatch.mockResolvedValue("x");
+      pickPatchPath.mockResolvedValue("/out.patch");
+      writePatch.mockRejectedValue(new Error("拡張子が不正"));
+      setup();
+      fireEvent.click(screen.getByText("パッチを保存…"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("拡張子が不正");
+    });
+  });
+
+  it("shows the difference map and jumps from it", () => {
+    const cell = (n: number, text: string) => ({ line_no: n, segments: [{ text, changed: false }] });
+    const r: DiffRow[] = [
+      { kind: "equal", left: cell(1, "a"), right: cell(1, "a") },
+      { kind: "replace", left: cell(2, "b"), right: cell(2, "X") },
+    ];
+    render(<TextCompare leftText={"a\nb"} rightText={"a\nX"} rows={r} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+    fireEvent.click(screen.getByRole("button", { name: "差分1へ移動" }));
+    expect(screen.getByText(/1 \/ 1 箇所/)).toBeInTheDocument();
   });
 });

@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { diffText, saveText } from "../api";
+import { diffText, makePatch, pickPatchPath, saveText, writePatch } from "../api";
+import { findMatches, type Match } from "../lib/find";
+import { baseName } from "../lib/recent";
 import { applyBlock, blockLines, correspondingLine, findBlocks, type Side } from "../lib/merge";
 import type { DiffMode, DiffOptions, DiffRow, TextEncoding } from "../types";
 import { CellText } from "./Segments";
-import { ToolbarPortal } from "./ToolbarSlot";
+import { Overview } from "./Overview";
+import { OverviewPortal, ToolbarPortal } from "./ToolbarSlot";
 import { NumberedTextarea, type EditorHandle, type LineHighlight } from "./NumberedTextarea";
 
 const REDIFF_DELAY_MS = 300;
@@ -41,6 +44,10 @@ export function TextCompare(props: Props) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState(-1);
+  const [findOpen, setFindOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
   const applied = useRef({ mode: props.mode, options: props.options });
   const diffed = useRef({ left: props.leftText, right: props.rightText });
   const seq = useRef(0);
@@ -49,6 +56,12 @@ export function TextCompare(props: Props) {
 
   const blocks = useMemo(() => findBlocks(rows), [rows]);
   const blockAt = useMemo(() => new Map(blocks.map((b, i) => [b.start, i])), [blocks]);
+
+  // 検索（⌘F）: 左右のテキストから一致箇所を列挙し、現在の一致を表示位置まで移動する
+  const matches = useMemo(() => (findOpen ? findMatches(leftText, rightText, query) : []), [findOpen, leftText, rightText, query]);
+  const active: Match | null = matches.length > 0 ? matches[Math.min(findIndex, matches.length - 1)] : null;
+  const isHit = (side: Side, line: number | undefined) => active !== null && active.side === side && active.line === line;
+  const hitIn = (side: Side) => (active && active.side === side ? { line: active.line, start: active.start, length: active.length } : undefined);
 
   const rediff = async (l: string, r: string, mode: DiffMode) => {
     if (props.leftPath === null || props.rightPath === null) return; // 1つだけのときは比較しない
@@ -100,9 +113,46 @@ export function TextCompare(props: Props) {
     if (blocks.length > 0) goto((cursor + delta + blocks.length) % blocks.length);
   };
 
-  // F7 / Shift+F7 で次/前の差分へ
+  const stepFind = (delta: 1 | -1) => {
+    if (matches.length > 0) setFindIndex((i) => (Math.min(i, matches.length - 1) + delta + matches.length) % matches.length);
+  };
+
+  // 現在の一致が変わったら、その位置までスクロールする
+  useEffect(() => {
+    if (!active) return;
+    if (editing) editors[active.side].current?.scrollToLine(Math.max(1, active.line - 2));
+    else root.current?.querySelector(`[data-${active.side}-line="${active.line}"]`)?.scrollIntoView?.({ block: "center" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.side, active?.line, active?.start, editing]);
+
+  const exportPatch = async () => {
+    if (props.leftPath === null || props.rightPath === null) return;
+    try {
+      const patch = await makePatch(leftText, rightText, props.leftPath, props.rightPath);
+      if (patch === "") {
+        setNotice("差分がないため、パッチは作成しませんでした");
+      } else {
+        const path = await pickPatchPath(`${baseName(props.leftPath)}.patch`);
+        if (!path) return;
+        await writePatch(path, patch);
+        setNotice("パッチを保存しました");
+      }
+      setError(null);
+      setTimeout(() => setNotice(null), 4000);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  // F7 / Shift+F7 で次/前の差分へ、⌘F / Ctrl+F で検索、Esc で検索を閉じる
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f" && !single) {
+        e.preventDefault();
+        setFindOpen(true);
+      } else if (e.key === "Escape" && findOpen) {
+        setFindOpen(false);
+      }
       if (e.key !== "F7") return;
       e.preventDefault();
       step(e.shiftKey ? -1 : 1);
@@ -170,10 +220,47 @@ export function TextCompare(props: Props) {
             <span className="summary">
               差分 {diffCount} 行{blocks.length > 0 && cursor >= 0 ? `（${cursor + 1} / ${blocks.length} 箇所）` : ""}
             </span>
+            <button onClick={() => void exportPatch()}>パッチを保存…</button>
+            {notice && <span className="summary">{notice}</span>}
+            {findOpen && (
+              <span className="find">
+                <input
+                  autoFocus
+                  type="search"
+                  aria-label="検索"
+                  placeholder="検索"
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setFindIndex(0);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") stepFind(e.shiftKey ? -1 : 1);
+                  }}
+                />
+                <button aria-label="前の一致" disabled={matches.length === 0} onClick={() => stepFind(-1)}>
+                  ◀
+                </button>
+                <button aria-label="次の一致" disabled={matches.length === 0} onClick={() => stepFind(1)}>
+                  ▶
+                </button>
+                <span className="summary">
+                  {active ? `${Math.min(findIndex, matches.length - 1) + 1} / ${matches.length}` : query !== "" ? "見つかりません" : ""}
+                </span>
+                <button aria-label="検索を閉じる" onClick={() => setFindOpen(false)}>
+                  ✕
+                </button>
+              </span>
+            )}
           </>
         )}
         {error && <span role="alert" className="error">{error}</span>}
       </ToolbarPortal>
+      {!single && (
+        <OverviewPortal>
+          <Overview rows={rows} blocks={blocks} cursor={cursor} onJump={goto} />
+        </OverviewPortal>
+      )}
       {!single && (
       <div className="pane-actions">
         {(["left", "right"] as const).map((side) => (
@@ -183,9 +270,9 @@ export function TextCompare(props: Props) {
       )}
       {/* 編集→表示→編集でも元に戻す履歴を保つため、テキストエリアは常に保持し表示だけ切り替える */}
       <div className={editing && !single ? "edit-panes" : "edit-panes offscreen"} aria-hidden={!editing || single}>
-        <NumberedTextarea ref={editors.left} label="左のテキスト" value={leftText} onChange={setLeftText} onSave={saveShortcut("left")} onScrollLine={syncFrom("left")} highlights={highlightsFor(rows, "left")} />
+        <NumberedTextarea ref={editors.left} label="左のテキスト" value={leftText} onChange={setLeftText} onSave={saveShortcut("left")} onScrollLine={syncFrom("left")} highlights={highlightsFor(rows, "left")} findHit={hitIn("left")} />
         <div className="mid" />
-        <NumberedTextarea ref={editors.right} label="右のテキスト" value={rightText} onChange={setRightText} onSave={saveShortcut("right")} onScrollLine={syncFrom("right")} highlights={highlightsFor(rows, "right")} />
+        <NumberedTextarea ref={editors.right} label="右のテキスト" value={rightText} onChange={setRightText} onSave={saveShortcut("right")} onScrollLine={syncFrom("right")} highlights={highlightsFor(rows, "right")} findHit={hitIn("right")} />
       </div>
       {(!editing || single) && (
         <table className="diff-table">
@@ -195,7 +282,7 @@ export function TextCompare(props: Props) {
               return (
                 <tr key={i} className={`row-${row.kind}${inCurrent(i) ? " row-current" : ""}`} data-block={b}>
                   <td className="ln">{row.left?.line_no}</td>
-                  <td className="code left">
+                  <td className={`code left${isHit("left", row.left?.line_no) ? " find-hit-cell" : ""}`} data-left-line={row.left?.line_no}>
                     <CellText cell={row.left} />
                   </td>
                   <td className="mid merge">
@@ -211,7 +298,7 @@ export function TextCompare(props: Props) {
                     )}
                   </td>
                   <td className="ln">{row.right?.line_no}</td>
-                  <td className="code right">
+                  <td className={`code right${isHit("right", row.right?.line_no) ? " find-hit-cell" : ""}`} data-right-line={row.right?.line_no}>
                     <CellText cell={row.right} />
                   </td>
                 </tr>

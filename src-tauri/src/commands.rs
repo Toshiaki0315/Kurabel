@@ -1,7 +1,8 @@
 //! Tauri コマンド。ロジックは各モジュールに置き、ここは薄いラッパーに留める。
 
 use crate::compare::{self, Comparison, PathKind};
-use crate::textcodec::TextEncoding;
+use crate::fileops;
+use crate::textcodec::{EncodingChoice, TextEncoding};
 use crate::textdiff::{self, DiffMode, DiffOptions, DiffRow};
 
 #[tauri::command]
@@ -10,13 +11,41 @@ pub fn compare_paths(
     right: Option<String>,
     mode: DiffMode,
     options: DiffOptions,
+    encodings: EncodingChoice,
 ) -> Result<Comparison, String> {
     match (left, right) {
-        (Some(l), Some(r)) => compare::compare_paths(l.as_ref(), r.as_ref(), mode, &options),
-        (Some(l), None) => compare::view_single(l.as_ref(), true),
-        (None, Some(r)) => compare::view_single(r.as_ref(), false),
+        (Some(l), Some(r)) => compare::compare_paths(l.as_ref(), r.as_ref(), mode, &options, &encodings),
+        (Some(l), None) => compare::view_single(l.as_ref(), true, &options, encodings.left.as_deref()),
+        (None, Some(r)) => compare::view_single(r.as_ref(), false, &options, encodings.right.as_deref()),
         (None, None) => Err("ファイルまたはフォルダが指定されていません".to_string()),
     }
+}
+
+#[tauri::command]
+pub fn copy_entry(src_root: String, dst_root: String, rel: String) -> Result<(), String> {
+    fileops::copy_entry(src_root.as_ref(), dst_root.as_ref(), &rel)
+}
+
+#[tauri::command]
+pub fn delete_entry(root: String, rel: String) -> Result<(), String> {
+    fileops::delete_entry(root.as_ref(), &rel)
+}
+
+#[tauri::command]
+pub fn make_patch(left_text: String, right_text: String, left_label: String, right_label: String) -> String {
+    textdiff::unified_patch(&left_text, &right_text, &left_label, &right_label)
+}
+
+#[tauri::command]
+pub fn write_patch(path: String, content: String) -> Result<(), String> {
+    fileops::write_patch(path.as_ref(), &content)
+}
+
+/// 起動時のコマンドライン引数で指定された比較対象（最大2つ）。
+#[tauri::command]
+pub fn initial_paths() -> Vec<String> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    fileops::parse_paths(std::env::args(), &cwd)
 }
 
 #[tauri::command]
@@ -60,14 +89,40 @@ mod tests {
     fn compare_paths_handles_a_single_side() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_string_lossy().into_owned();
-        let one = |l: Option<String>, r: Option<String>| compare_paths(l, r, DiffMode::Line, DiffOptions::default());
+        let one = |l: Option<String>, r: Option<String>| compare_paths(l, r, DiffMode::Line, DiffOptions::default(), EncodingChoice::default());
         assert!(matches!(one(Some(dir.clone()), None), Ok(Comparison::Directory { .. })));
         assert!(matches!(one(None, Some(dir)), Ok(Comparison::Directory { .. })));
         assert!(one(None, None).is_err());
     }
 
     #[test]
+    fn file_command_wrappers_delegate() {
+        let d = tempfile::tempdir().unwrap();
+        let (src, dst) = (d.path().join("s"), d.path().join("d"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("a.txt"), "A").unwrap();
+        let (s, t) = (src.to_string_lossy().into_owned(), dst.to_string_lossy().into_owned());
+        copy_entry(s.clone(), t.clone(), "a.txt".into()).unwrap();
+        assert!(dst.join("a.txt").exists());
+        delete_entry(t, "a.txt".into()).unwrap();
+        assert!(!dst.join("a.txt").exists());
+        assert!(delete_entry(s, "../x".into()).is_err());
+        let patch = make_patch("a\n".into(), "b\n".into(), "l".into(), "r".into());
+        assert!(patch.contains("-a\n+b"));
+        let out = d.path().join("x.patch").to_string_lossy().into_owned();
+        write_patch(out, patch).unwrap();
+        assert!(write_patch("/nonexistent/x.patch".into(), "x".into()).is_err());
+    }
+
+    #[test]
+    fn initial_paths_reads_the_process_arguments() {
+        // テスト実行時の引数にはパスが含まれないか、含まれても絶対パスになる
+        assert!(initial_paths().len() <= 2);
+    }
+
+    #[test]
     fn compare_paths_reports_missing() {
-        assert!(compare_paths(Some("/nonexistent/x".into()), Some("/nonexistent/y".into()), DiffMode::Line, DiffOptions::default()).is_err());
+        assert!(compare_paths(Some("/nonexistent/x".into()), Some("/nonexistent/y".into()), DiffMode::Line, DiffOptions::default(), EncodingChoice::default()).is_err());
     }
 }

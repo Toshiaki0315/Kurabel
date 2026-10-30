@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import type { Settings } from "../lib/settings";
+import { useEffect, useState } from "react";
+import { parseExclude, type Settings } from "../lib/settings";
 import type { DiffMode, DiffOptions } from "../types";
 
 interface Props {
@@ -23,7 +23,10 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const toggle = (key: keyof DiffOptions) =>
+  const [excludeText, setExcludeText] = useState(settings.options.exclude.join("\n"));
+  const update = (patch: Partial<DiffOptions>) => onChange({ ...settings, options: { ...settings.options, ...patch } });
+
+  const toggle = (key: "ignore_whitespace" | "ignore_case") =>
     onChange({ ...settings, options: { ...settings.options, [key]: !settings.options[key] } });
 
   return (
@@ -48,6 +51,34 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
           <label>
             <input type="checkbox" checked={settings.options.ignore_case} onChange={() => toggle("ignore_case")} />
             大文字小文字の違い
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>フォルダの比較</legend>
+          <label className="stack">
+            除外するパターン
+            <textarea
+              aria-label="除外パターン"
+              rows={3}
+              placeholder={".git\n*.obj\nnode_modules"}
+              value={excludeText}
+              onChange={(e) => {
+                setExcludeText(e.target.value);
+                update({ exclude: parseExclude(e.target.value) });
+              }}
+            />
+            <small>改行またはカンマ区切り。* と ? が使えます（例: *.obj）</small>
+          </label>
+          <label>
+            <input type="checkbox" checked={settings.options.recursive} onChange={() => update({ recursive: !settings.options.recursive })} />
+            サブフォルダを含める
+          </label>
+          <label>
+            比較方法
+            <select aria-label="フォルダの比較方法" value={settings.options.quick ? "quick" : "content"} onChange={(e) => update({ quick: e.target.value === "quick" })}>
+              <option value="content">内容（正確）</option>
+              <option value="quick">サイズと更新日時（高速）</option>
+            </select>
           </label>
         </fieldset>
         <div className="dialog-actions">

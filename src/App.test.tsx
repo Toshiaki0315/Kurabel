@@ -5,6 +5,10 @@ const comparePaths = vi.fn();
 const pickPath = vi.fn();
 const pathKind = vi.fn();
 const confirmDiscard = vi.fn();
+const confirmAction = vi.fn();
+const initialPaths = vi.fn();
+const copyEntry = vi.fn();
+const deleteEntry = vi.fn();
 let closeGuard: () => Promise<boolean>;
 let menuOpenSettings: () => void;
 let dropHandler: (paths: string[], side: "left" | "right") => void;
@@ -13,6 +17,10 @@ vi.mock("./api", () => ({
   pickPath: (...a: unknown[]) => pickPath(...a),
   pathKind: (...a: unknown[]) => pathKind(...a),
   confirmDiscard: (...a: unknown[]) => confirmDiscard(...a),
+  confirmAction: (...a: unknown[]) => confirmAction(...a),
+  initialPaths: (...a: unknown[]) => initialPaths(...a),
+  copyEntry: (...a: unknown[]) => copyEntry(...a),
+  deleteEntry: (...a: unknown[]) => deleteEntry(...a),
   saveText: vi.fn().mockResolvedValue(undefined),
   diffText: vi.fn().mockResolvedValue([]),
 }));
@@ -33,7 +41,7 @@ vi.mock("./lib/useDragDrop", () => ({
 }));
 
 import App from "./App";
-import { DEFAULT_OPTIONS as OPTS } from "./types";
+import { AUTO_ENCODING, DEFAULT_OPTIONS as OPTS } from "./types";
 
 const textResult = {
   kind: "text",
@@ -70,6 +78,11 @@ describe("App", () => {
     pickPath.mockReset();
     pathKind.mockReset();
     confirmDiscard.mockReset();
+    confirmAction.mockReset();
+    copyEntry.mockReset();
+    deleteEntry.mockReset();
+    initialPaths.mockReset();
+    initialPaths.mockResolvedValue([]);
     localStorage.clear();
   });
 
@@ -83,10 +96,12 @@ describe("App", () => {
     render(<App />);
     await choose("左", "/l.txt");
     await choose("右", "/r.txt");
-    await waitFor(() => expect(comparePaths).toHaveBeenCalledWith("/l.txt", "/r.txt", "line", OPTS));
+    await waitFor(() => expect(comparePaths).toHaveBeenCalledWith("/l.txt", "/r.txt", "line", OPTS, AUTO_ENCODING));
     expect(await screen.findByText("編集")).toBeInTheDocument();
-    expect(screen.getByText("Shift_JIS / CRLF")).toBeInTheDocument();
-    expect(screen.getByText("UTF-8 (BOM) / LF")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "自動 (Shift_JIS)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "自動 (UTF-8 (BOM))" })).toBeInTheDocument();
+    expect(screen.getByText("CRLF")).toBeInTheDocument();
+    expect(screen.getByText("LF")).toBeInTheDocument();
   });
 
   it("ignores a cancelled dialog", async () => {
@@ -109,7 +124,7 @@ describe("App", () => {
     expect(await screen.findByText(/バイナリ比較/)).toBeInTheDocument();
     expect(screen.getByText("185955 バイト")).toBeInTheDocument();
     expect(screen.getByText("30833 バイト")).toBeInTheDocument();
-    expect(comparePaths).toHaveBeenCalledWith("/l.bin", "/r.bin", "word", OPTS);
+    expect(comparePaths).toHaveBeenCalledWith("/l.bin", "/r.bin", "word", OPTS, AUTO_ENCODING);
   });
 
   it("opens a dialog of the same kind as the other side", async () => {
@@ -156,7 +171,7 @@ describe("App", () => {
     await choose("左", "/L", true);
     await choose("右", "/R", true);
     fireEvent.click((await screen.findAllByText("f.txt"))[0]);
-    await waitFor(() => expect(comparePaths).toHaveBeenLastCalledWith("/L/f.txt", "/R/f.txt", "line", OPTS));
+    await waitFor(() => expect(comparePaths).toHaveBeenLastCalledWith("/L/f.txt", "/R/f.txt", "line", OPTS, AUTO_ENCODING));
     expect(await screen.findByText("← ディレクトリ比較に戻る")).toBeInTheDocument();
     fireEvent.click(screen.getByText("← ディレクトリ比較に戻る"));
     expect(await screen.findByLabelText("表示する差分")).toBeInTheDocument();
@@ -181,7 +196,7 @@ describe("App", () => {
     await choose("左", "/l.txt");
     await choose("右", "/r.txt");
     await waitFor(() =>
-      expect(comparePaths).toHaveBeenCalledWith("/l.txt", "/r.txt", "line", { ignore_whitespace: true, ignore_case: true }),
+      expect(comparePaths).toHaveBeenCalledWith("/l.txt", "/r.txt", "line", { ...OPTS, ignore_whitespace: true, ignore_case: true }, AUTO_ENCODING),
     );
     // 設定はダイアログを開き直しても保持され、保存される
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
@@ -201,7 +216,7 @@ describe("App", () => {
   });
 
   it("restores saved settings on startup", () => {
-    localStorage.setItem("kurabel.settings", JSON.stringify({ mode: "word", options: { ignore_whitespace: false, ignore_case: true } }));
+    localStorage.setItem("kurabel.settings", JSON.stringify({ mode: "word", options: { ...OPTS, ignore_case: true } }));
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
     expect(screen.getByLabelText("単語単位")).toBeChecked();
@@ -312,12 +327,12 @@ describe("App", () => {
       fireEvent.click(screen.getByRole("button", { name: "左を閉じる" }));
       await waitFor(() => expect(screen.queryByText("/l.txt")).toBeNull());
       expect(screen.getByText("/r.txt")).toBeInTheDocument();
-      await waitFor(() => expect(comparePaths).toHaveBeenLastCalledWith(null, "/r.txt", "line", OPTS));
-      expect(await screen.findByText("UTF-8 (BOM) / LF")).toBeInTheDocument();
+      await waitFor(() => expect(comparePaths).toHaveBeenLastCalledWith(null, "/r.txt", "line", OPTS, AUTO_ENCODING));
+      expect(await screen.findByRole("option", { name: "自動 (UTF-8 (BOM))" })).toBeInTheDocument();
       expect(screen.queryByText("編集")).toBeNull(); // 1つだけなら閲覧専用
       // 閉じた側に新しいファイルを開き直せる
       await choose("左", "/new.txt");
-      await waitFor(() => expect(comparePaths).toHaveBeenLastCalledWith("/new.txt", "/r.txt", "line", OPTS));
+      await waitFor(() => expect(comparePaths).toHaveBeenLastCalledWith("/new.txt", "/r.txt", "line", OPTS, AUTO_ENCODING));
       // 両方閉じると案内に戻る
       fireEvent.click(screen.getByRole("button", { name: "左を閉じる" }));
       await waitFor(() => expect(screen.queryByText("/new.txt")).toBeNull());
@@ -365,12 +380,159 @@ describe("App", () => {
       render(<App />);
       await act(async () => dropHandler(["/only.txt"], "right"));
       // 空いている左が先に埋まる
-      await waitFor(() => expect(comparePaths).toHaveBeenCalledWith("/only.txt", null, "line", OPTS));
-      expect(await screen.findByText("Shift_JIS / CRLF")).toBeInTheDocument();
-      expect(screen.queryByText("UTF-8 (BOM) / LF")).toBeNull(); // 空の右側には文字コードを出さない
+      await waitFor(() => expect(comparePaths).toHaveBeenCalledWith("/only.txt", null, "line", OPTS, AUTO_ENCODING));
+      expect(await screen.findByRole("option", { name: "自動 (Shift_JIS)" })).toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: "自動 (UTF-8 (BOM))" })).toBeNull(); // 空の右側には文字コードを出さない
       for (const label of ["編集", "差分", "保存"]) expect(screen.queryByText(new RegExp(label))).toBeNull();
       // 履歴には2つ揃ったときだけ記録する
       expect(screen.queryByText(/⇄/)).toBeNull();
+    });
+  });
+
+  describe("command-line paths", () => {
+    it("opens the paths given at startup: two paths fill both sides, one fills the left", async () => {
+      initialPaths.mockResolvedValue(["/a.txt", "/b.txt"]);
+      comparePaths.mockResolvedValue(textResult);
+      const { unmount } = render(<App />);
+      expect(await screen.findByText("/a.txt")).toBeInTheDocument();
+      expect(screen.getByText("/b.txt")).toBeInTheDocument();
+      await waitFor(() => expect(comparePaths).toHaveBeenCalledWith("/a.txt", "/b.txt", "line", OPTS, AUTO_ENCODING));
+      unmount();
+      initialPaths.mockResolvedValue(["/only.txt"]);
+      render(<App />);
+      expect(await screen.findByText("/only.txt")).toBeInTheDocument();
+      expect(screen.getAllByText(/未選択/)).toHaveLength(1);
+    });
+
+    it("ignores a failure to read the startup paths", async () => {
+      initialPaths.mockRejectedValue("boom");
+      render(<App />);
+      await waitFor(() => expect(initialPaths).toHaveBeenCalled());
+      expect(screen.getByText(/ドロップしてください/)).toBeInTheDocument();
+    });
+  });
+
+  describe("manual encoding", () => {
+    it("re-reads with the chosen encoding, resets it when a different file is opened", async () => {
+      comparePaths.mockImplementation(async () => ({ ...textResult }));
+      render(<App />);
+      await choose("左", "/l.txt");
+      await choose("右", "/r.txt");
+      await screen.findByLabelText("左の文字コード");
+      fireEvent.change(screen.getByLabelText("左の文字コード"), { target: { value: "EUC-JP" } });
+      await waitFor(() =>
+        expect(comparePaths).toHaveBeenLastCalledWith("/l.txt", "/r.txt", "line", OPTS, { left: "EUC-JP", right: null }),
+      );
+      await waitFor(() => expect(screen.getByLabelText("左の文字コード")).toHaveValue("EUC-JP"));
+      fireEvent.change(screen.getByLabelText("左の文字コード"), { target: { value: "" } });
+      await waitFor(() => expect(comparePaths).toHaveBeenLastCalledWith("/l.txt", "/r.txt", "line", OPTS, AUTO_ENCODING));
+      fireEvent.change(screen.getByLabelText("右の文字コード"), { target: { value: "Shift_JIS" } });
+      await waitFor(() => expect(screen.getByLabelText("右の文字コード")).toHaveValue("Shift_JIS"));
+      await act(async () => dropHandler(["/x.txt", "/y.txt"], "left"));
+      await waitFor(() => expect(screen.getByLabelText("右の文字コード")).toHaveValue(""));
+    });
+
+    it("keeps the previous encoding and shows the error when it cannot be decoded", async () => {
+      comparePaths.mockImplementationOnce(async () => ({ ...textResult })).mockImplementationOnce(async () => ({ ...textResult }));
+      render(<App />);
+      await choose("左", "/l.txt");
+      await choose("右", "/r.txt");
+      await screen.findByLabelText("左の文字コード");
+      comparePaths.mockRejectedValueOnce("utf-8 として読み込めませんでした");
+      fireEvent.change(screen.getByLabelText("左の文字コード"), { target: { value: "UTF-8" } });
+      expect(await screen.findByRole("alert")).toHaveTextContent("読み込めませんでした");
+      expect(screen.getByLabelText("左の文字コード")).toHaveValue("");
+    });
+
+    it("does not offer the control for a single-sided or non-text view", async () => {
+      comparePaths.mockResolvedValue({ kind: "binary", left_size: 1, right_size: 1, rows: [] });
+      render(<App />);
+      await act(async () => dropHandler(["/a.bin", "/b.bin"], "left"));
+      await screen.findByText(/バイナリ比較/);
+      expect(screen.queryByLabelText("左の文字コード")).toBeNull();
+    });
+  });
+
+  describe("folder operations", () => {
+    const entries = [
+      { path: "both.txt", left: "file", right: "file", status: "modified" },
+      { path: "only-left.txt", left: "file", right: null, status: "removed" },
+    ];
+    async function openDirs() {
+      comparePaths.mockImplementation(async () => ({ kind: "directory", entries: entries.map((e) => ({ ...e })) }));
+      render(<App />);
+      await choose("左", "/L", true);
+      await choose("右", "/R", true);
+      await screen.findByLabelText("表示する差分");
+    }
+    const select = (rel: string) => fireEvent.click(screen.getByRole("treeitem", { name: rel }));
+
+    it("copies the selected item, asking before overwriting, then refreshes", async () => {
+      copyEntry.mockResolvedValue(undefined);
+      await openDirs();
+      select("only-left.txt");
+      fireEvent.click(screen.getByText("→ 右へコピー"));
+      await waitFor(() => expect(copyEntry).toHaveBeenCalledWith("/L", "/R", "only-left.txt"));
+      expect(confirmAction).not.toHaveBeenCalled(); // 上書きではないので確認なし
+      select("both.txt");
+      confirmAction.mockResolvedValueOnce(false);
+      fireEvent.click(screen.getByText("← 左へコピー"));
+      await waitFor(() => expect(confirmAction).toHaveBeenCalledWith(expect.stringContaining("左側に既にあります"), "上書き"));
+      expect(copyEntry).toHaveBeenCalledTimes(1);
+      confirmAction.mockResolvedValueOnce(true);
+      fireEvent.click(screen.getByText("← 左へコピー"));
+      await waitFor(() => expect(copyEntry).toHaveBeenLastCalledWith("/R", "/L", "both.txt"));
+    });
+
+    it("deletes only after a confirmation that says it is permanent", async () => {
+      deleteEntry.mockResolvedValue(undefined);
+      await openDirs();
+      select("only-left.txt");
+      confirmAction.mockResolvedValueOnce(false);
+      fireEvent.click(screen.getByText("左を削除"));
+      await waitFor(() => expect(confirmAction).toHaveBeenCalledWith(expect.stringContaining("元に戻せません"), "削除"));
+      expect(deleteEntry).not.toHaveBeenCalled();
+      confirmAction.mockResolvedValueOnce(true);
+      fireEvent.click(screen.getByText("左を削除"));
+      await waitFor(() => expect(deleteEntry).toHaveBeenCalledWith("/L", "only-left.txt"));
+      select("both.txt");
+      confirmAction.mockResolvedValueOnce(true);
+      fireEvent.click(screen.getByText("右を削除"));
+      await waitFor(() => expect(deleteEntry).toHaveBeenLastCalledWith("/R", "both.txt"));
+    });
+
+    it("reports operation failures", async () => {
+      copyEntry.mockRejectedValue("denied");
+      deleteEntry.mockRejectedValue("locked");
+      await openDirs();
+      select("only-left.txt");
+      fireEvent.click(screen.getByText("→ 右へコピー"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("denied");
+      confirmAction.mockResolvedValue(true);
+      fireEvent.click(screen.getByText("左を削除"));
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("locked"));
+    });
+
+    it("re-runs the folder comparison when the folder settings change", async () => {
+      await openDirs();
+      comparePaths.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "設定" }));
+      fireEvent.change(screen.getByLabelText("除外パターン"), { target: { value: "*.obj" } });
+      await waitFor(() => expect(comparePaths).toHaveBeenCalledWith("/L", "/R", "line", { ...OPTS, exclude: ["*.obj"] }, AUTO_ENCODING));
+      expect(comparePaths).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not re-run a text comparison when the folder settings change", async () => {
+      comparePaths.mockResolvedValue(textResult);
+      render(<App />);
+      await choose("左", "/l.txt");
+      await choose("右", "/r.txt");
+      await screen.findByText("編集");
+      comparePaths.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "設定" }));
+      fireEvent.click(screen.getByLabelText("サブフォルダを含める"));
+      await new Promise((r) => setTimeout(r, 450));
+      expect(comparePaths).not.toHaveBeenCalled();
     });
   });
 });

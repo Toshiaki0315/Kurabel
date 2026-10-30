@@ -1,10 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
-import { confirm, open } from "@tauri-apps/plugin-dialog";
-import type { Comparison, DiffMode, DiffOptions, DiffRow, TextEncoding } from "./types";
+import { confirm, open, save } from "@tauri-apps/plugin-dialog";
+import { AUTO_ENCODING, type Comparison, type DiffMode, type DiffOptions, type DiffRow, type EncodingChoice, type TextEncoding } from "./types";
 
 /** 片方が null のときは、もう片方だけをそのまま表示する。 */
-export function comparePaths(left: string | null, right: string | null, mode: DiffMode, options: DiffOptions): Promise<Comparison> {
-  return invoke<Comparison>("compare_paths", { left, right, mode, options });
+export function comparePaths(
+  left: string | null,
+  right: string | null,
+  mode: DiffMode,
+  options: DiffOptions,
+  encodings: EncodingChoice = AUTO_ENCODING,
+): Promise<Comparison> {
+  return invoke<Comparison>("compare_paths", { left, right, mode, options, encodings });
 }
 
 export function diffText(left: string, right: string, mode: DiffMode, options: DiffOptions): Promise<DiffRow[]> {
@@ -34,4 +40,35 @@ export function confirmDiscard(): Promise<boolean> {
     okLabel: "破棄",
     cancelLabel: "キャンセル",
   });
+}
+
+/** 起動時のコマンドライン引数で指定された比較対象（最大2つ） */
+export function initialPaths(): Promise<string[]> {
+  return invoke<string[]>("initial_paths");
+}
+
+export function copyEntry(srcRoot: string, dstRoot: string, rel: string): Promise<void> {
+  return invoke("copy_entry", { srcRoot, dstRoot, rel });
+}
+
+export function deleteEntry(root: string, rel: string): Promise<void> {
+  return invoke("delete_entry", { root, rel });
+}
+
+export function makePatch(leftText: string, rightText: string, leftLabel: string, rightLabel: string): Promise<string> {
+  return invoke<string>("make_patch", { leftText, rightText, leftLabel, rightLabel });
+}
+
+export function writePatch(path: string, content: string): Promise<void> {
+  return invoke("write_patch", { path, content });
+}
+
+/** パッチの保存先をダイアログで選ぶ。キャンセル時は null。 */
+export async function pickPatchPath(defaultName: string): Promise<string | null> {
+  return save({ defaultPath: defaultName, filters: [{ name: "パッチ", extensions: ["patch", "diff", "txt"] }] });
+}
+
+/** 取り消せない操作の前の確認 */
+export function confirmAction(message: string, okLabel: string): Promise<boolean> {
+  return confirm(message, { title: "クラベル", kind: "warning", okLabel, cancelLabel: "キャンセル" });
 }

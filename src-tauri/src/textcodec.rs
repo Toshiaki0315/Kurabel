@@ -29,6 +29,28 @@ fn finish(text: std::borrow::Cow<'_, str>, had_errors: bool, enc: &'static Encod
     Some(Decoded { text: text.into_owned(), encoding: TextEncoding { name: enc.name().to_string(), bom } })
 }
 
+/// ファイルごとの文字コードの手動指定（None = 自動判定）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct EncodingChoice {
+    pub left: Option<String>,
+    pub right: Option<String>,
+}
+
+/// 指定された文字コードとして読み込む。その文字コードで読めなければエラー。
+pub fn decode_as(data: &[u8], name: &str) -> Result<Decoded, String> {
+    let enc = Encoding::for_label(name.as_bytes()).ok_or_else(|| format!("未対応の文字コードです: {name}"))?;
+    let (bom, body) = match Encoding::for_bom(data) {
+        Some((e, len)) if e == enc => (true, &data[len..]),
+        _ => (false, data),
+    };
+    let (text, had_errors) = enc.decode_without_bom_handling(body);
+    if had_errors {
+        return Err(format!("{} として読み込めませんでした", enc.name()));
+    }
+    Ok(Decoded { text: text.into_owned(), encoding: TextEncoding { name: enc.name().to_string(), bom } })
+}
+
 /// バイト列をテキストとして解釈する。テキストと見なせなければ None（バイナリ扱い）。
 pub fn decode(data: &[u8]) -> Option<Decoded> {
     if let Some((enc, bom_len)) = Encoding::for_bom(data) {
@@ -135,5 +157,26 @@ mod tests {
         assert!(encode("😀", &enc("Shift_JIS", false)).unwrap_err().contains("表現できない"));
         assert!(encode("a", &enc("no-such-encoding", false)).is_err());
         assert!(encode("a", &enc("replacement", false)).is_err());
+    }
+
+    #[test]
+    fn decodes_with_a_forced_encoding() {
+        let (sjis, _, _) = SHIFT_JIS.encode(JP);
+        let d = decode_as(&sjis, "Shift_JIS").unwrap();
+        assert_eq!((d.text.as_str(), d.encoding), (JP, enc("Shift_JIS", false)));
+        assert!(decode_as(&[0xEF, 0xBB, 0xBF, b'a'], "utf-8").unwrap().encoding.bom);
+        assert!(!decode_as(b"a", "utf-8").unwrap().encoding.bom);
+        assert!(decode_as(&[0xFF, 0xFE, 0xFD], "utf-8").is_err());
+        assert!(decode_as(b"a", "no-such").is_err());
+        // BOM が別の文字コードのものなら、その BOM は本文として扱う
+        assert!(!decode_as(&[0xFF, 0xFE, b'a', 0], "utf-8").map(|d| d.encoding.bom).unwrap_or(false));
+    }
+
+    #[test]
+    fn encoding_choice_defaults_to_auto() {
+        let c: EncodingChoice = serde_json::from_str("{}").unwrap();
+        assert_eq!(c, EncodingChoice::default());
+        let c: EncodingChoice = serde_json::from_str("{\"left\":\"EUC-JP\"}").unwrap();
+        assert_eq!((c.left.as_deref(), c.right), (Some("EUC-JP"), None));
     }
 }

@@ -104,4 +104,16 @@ describe("NumberedTextarea", () => {
       expect(run("a", "b", vi.fn(() => false)).onChange).toHaveBeenCalledWith("b");
     });
   });
+
+  it("marks the current search hit, over a differing line too", () => {
+    const highlights = new Map<number, LineHighlight>([[2, { kind: "replace", segments: [{ text: "foo bar", changed: true }] }]]);
+    const { container } = render(
+      <NumberedTextarea label="t" value={"x\nfoo bar"} onChange={vi.fn()} highlights={highlights} findHit={{ line: 2, start: 4, length: 3 }} />,
+    );
+    const hit = container.querySelector("mark.find-hit")!;
+    expect(hit.textContent).toBe("bar");
+    expect(container.querySelector(".hl-replace")).not.toBeNull(); // 行の背景色は保つ
+    const { container: c2 } = render(<NumberedTextarea label="u" value="abc" onChange={vi.fn()} findHit={{ line: 2, start: 0, length: 1 }} />);
+    expect(c2.querySelector("mark.find-hit")).toBeNull();
+  });
 });

@@ -1,10 +1,13 @@
 //! ディレクトリ構成の比較。シンボリックリンクは辿らず、無視する。
 
+use crate::textdiff::DiffOptions;
+
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use walkdir::WalkDir;
 
 pub const MAX_ENTRIES: usize = 50_000;
@@ -39,9 +42,64 @@ pub struct DirEntry {
 
 type Tree = BTreeMap<String, (NodeKind, PathBuf)>;
 
-fn collect(root: &Path) -> Result<Tree, String> {
+/// `*`（0文字以上）と `?`（1文字）が使える、大文字小文字を区別しないパターン照合。
+pub fn glob_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.to_lowercase().chars().collect();
+    let t: Vec<char> = text.to_lowercase().chars().collect();
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star, mut mark) = (None, 0);
+    while ti < t.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == t[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some(pi);
+            mark = ti;
+            pi += 1;
+        } else if let Some(s) = star {
+            pi = s + 1;
+            mark += 1;
+            ti = mark;
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == '*' {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
+fn is_excluded(patterns: &[String], name: &str, rel: &str) -> bool {
+    patterns
+        .iter()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .any(|p| glob_match(p, if p.contains('/') { rel } else { name }))
+}
+
+fn rel_key(root: &Path, path: &Path) -> Result<String, String> {
+    let rel = path.strip_prefix(root).map_err(|e| e.to_string())?;
+    Ok(rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/"))
+}
+
+fn collect(root: &Path, options: &DiffOptions) -> Result<Tree, String> {
     let mut tree = Tree::new();
-    for entry in WalkDir::new(root).min_depth(1).max_depth(MAX_DEPTH).follow_links(false) {
+    let depth = if options.recursive { MAX_DEPTH } else { 1 };
+    let walker = WalkDir::new(root)
+        .min_depth(1)
+        .max_depth(depth)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            e.depth() == 0
+                || !is_excluded(
+                    &options.exclude,
+                    &e.file_name().to_string_lossy(),
+                    &rel_key(root, e.path()).unwrap_or_default(),
+                )
+        });
+    for entry in walker {
         let entry = entry.map_err(|e| e.to_string())?;
         let file_type = entry.file_type();
         if file_type.is_symlink() {
@@ -50,21 +108,15 @@ fn collect(root: &Path) -> Result<Tree, String> {
         if tree.len() >= MAX_ENTRIES {
             return Err(format!("エントリ数が上限 ({MAX_ENTRIES}) を超えました"));
         }
-        let rel = entry.path().strip_prefix(root).map_err(|e| e.to_string())?;
-        let key = rel
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("/");
         let kind = if file_type.is_dir() { NodeKind::Directory } else { NodeKind::File };
-        tree.insert(key, (kind, entry.path().to_path_buf()));
+        tree.insert(rel_key(root, entry.path())?, (kind, entry.path().to_path_buf()));
     }
     Ok(tree)
 }
 
 /// 片方だけ開いているとき用の一覧（比較対象がないので状態は Same）。
-pub fn list_dir(root: &Path, left_side: bool) -> Result<Vec<DirEntry>, String> {
-    Ok(collect(root)?
+pub fn list_dir(root: &Path, left_side: bool, options: &DiffOptions) -> Result<Vec<DirEntry>, String> {
+    Ok(collect(root, options)?
         .into_iter()
         .map(|(path, (kind, _))| DirEntry {
             path,
@@ -93,8 +145,19 @@ pub fn files_equal(a: &Path, b: &Path) -> io::Result<bool> {
     }
 }
 
-pub fn compare_dirs(left: &Path, right: &Path) -> Result<Vec<DirEntry>, String> {
-    let (lt, rt) = (collect(left)?, collect(right)?);
+/// サイズと更新日時（2秒の誤差まで許容。FAT など粒度の粗いファイルシステム対策）で同一とみなす。
+pub fn quick_equal(a: &Path, b: &Path) -> io::Result<bool> {
+    let (ma, mb) = (std::fs::metadata(a)?, std::fs::metadata(b)?);
+    if ma.len() != mb.len() {
+        return Ok(false);
+    }
+    let (ta, tb) = (ma.modified()?, mb.modified()?);
+    let gap = ta.duration_since(tb).unwrap_or_else(|e| e.duration());
+    Ok(gap <= Duration::from_secs(2))
+}
+
+pub fn compare_dirs(left: &Path, right: &Path, options: &DiffOptions) -> Result<Vec<DirEntry>, String> {
+    let (lt, rt) = (collect(left, options)?, collect(right, options)?);
     let mut keys: Vec<&String> = lt.keys().chain(rt.keys()).collect();
     keys.sort();
     keys.dedup();
@@ -106,7 +169,8 @@ pub fn compare_dirs(left: &Path, right: &Path) -> Result<Vec<DirEntry>, String> 
             (None, Some(_)) => DirStatus::Added,
             (Some((lk, _)), Some((rk, _))) if lk != rk => DirStatus::Modified,
             (Some((NodeKind::File, lp)), Some((_, rp))) => {
-                if files_equal(lp, rp).map_err(|e| format!("{key}: {e}"))? {
+                let equal = if options.quick { quick_equal(lp, rp) } else { files_equal(lp, rp) };
+                if equal.map_err(|e| format!("{key}: {e}"))? {
                     DirStatus::Same
                 } else {
                     DirStatus::Modified
@@ -149,7 +213,7 @@ mod tests {
         fs::create_dir(l.path().join("kind")).unwrap();
         fs::write(r.path().join("kind"), "x").unwrap();
 
-        let e = compare_dirs(l.path(), r.path()).unwrap();
+        let e = compare_dirs(l.path(), r.path(), &DiffOptions::default()).unwrap();
         assert_eq!(status_of(&e, "same.txt"), DirStatus::Same);
         assert_eq!(status_of(&e, "sub"), DirStatus::Same);
         assert_eq!(status_of(&e, "sub/mod.txt"), DirStatus::Modified);
@@ -168,12 +232,12 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         fs::create_dir(d.path().join("sub")).unwrap();
         fs::write(d.path().join("sub/a.txt"), "x").unwrap();
-        let left = list_dir(d.path(), true).unwrap();
+        let left = list_dir(d.path(), true, &DiffOptions::default()).unwrap();
         assert_eq!(left.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["sub", "sub/a.txt"]);
         assert!(left.iter().all(|e| e.left.is_some() && e.right.is_none() && e.status == DirStatus::Same));
-        let right = list_dir(d.path(), false).unwrap();
+        let right = list_dir(d.path(), false, &DiffOptions::default()).unwrap();
         assert!(right.iter().all(|e| e.left.is_none() && e.right.is_some()));
-        assert!(list_dir(&d.path().join("nope"), true).is_err());
+        assert!(list_dir(&d.path().join("nope"), true, &DiffOptions::default()).is_err());
     }
 
     #[test]
@@ -195,14 +259,14 @@ mod tests {
     fn symlinks_are_ignored() {
         let (l, r) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         std::os::unix::fs::symlink("/etc", l.path().join("link")).unwrap();
-        let e = compare_dirs(l.path(), r.path()).unwrap();
+        let e = compare_dirs(l.path(), r.path(), &DiffOptions::default()).unwrap();
         assert!(e.is_empty());
     }
 
     #[test]
     fn missing_directory_is_an_error() {
         let d = tempfile::tempdir().unwrap();
-        assert!(compare_dirs(d.path(), &d.path().join("nope")).is_err());
+        assert!(compare_dirs(d.path(), &d.path().join("nope"), &DiffOptions::default()).is_err());
     }
 
     #[cfg(unix)]
@@ -213,9 +277,73 @@ mod tests {
         fs::write(l.path().join("f"), "x").unwrap();
         fs::write(r.path().join("f"), "x").unwrap();
         fs::set_permissions(l.path().join("f"), fs::Permissions::from_mode(0o000)).unwrap();
-        let res = compare_dirs(l.path(), r.path());
+        let res = compare_dirs(l.path(), r.path(), &DiffOptions::default());
         fs::set_permissions(l.path().join("f"), fs::Permissions::from_mode(0o644)).unwrap();
         // root では読めてしまうため、エラーまたは Same のどちらかを許容
         assert!(res.is_err() || res.unwrap()[0].status == DirStatus::Same);
+    }
+
+    #[test]
+    fn glob_matching() {
+        assert!(glob_match("*.obj", "Main.OBJ"));
+        assert!(glob_match("a?c", "abc"));
+        assert!(glob_match("*", ""));
+        assert!(glob_match("a*b*c", "aXXbYYc"));
+        assert!(glob_match("node_modules", "node_modules"));
+        assert!(!glob_match("*.obj", "main.o"));
+        assert!(!glob_match("a?c", "ac"));
+        assert!(!glob_match("abc", "abcd"));
+    }
+
+    #[test]
+    fn excludes_by_name_or_relative_path_and_prunes_subtrees() {
+        let (l, r) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        for root in [l.path(), r.path()] {
+            fs::create_dir_all(root.join(".git/objects")).unwrap();
+            fs::create_dir_all(root.join("src/gen")).unwrap();
+            fs::write(root.join(".git/objects/x"), "1").unwrap();
+            fs::write(root.join("src/a.obj"), "1").unwrap();
+            fs::write(root.join("src/b.rs"), "1").unwrap();
+            fs::write(root.join("src/gen/c.rs"), "1").unwrap();
+        }
+        let opts = DiffOptions { exclude: vec![" .git ".into(), "*.obj".into(), "src/gen".into(), "".into()], ..Default::default() };
+        let paths: Vec<_> = compare_dirs(l.path(), r.path(), &opts).unwrap().into_iter().map(|e| e.path).collect();
+        assert_eq!(paths, vec!["src", "src/b.rs"]);
+        // 除外対象の名前がルート自身と同じでもルートは除外されない
+        let root_named = DiffOptions { exclude: vec![l.path().file_name().unwrap().to_string_lossy().into_owned()], ..Default::default() };
+        assert!(!compare_dirs(l.path(), r.path(), &root_named).unwrap().is_empty());
+    }
+
+    #[test]
+    fn non_recursive_lists_only_the_top_level() {
+        let (l, r) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        fs::create_dir(l.path().join("sub")).unwrap();
+        fs::write(l.path().join("sub/deep.txt"), "x").unwrap();
+        fs::write(l.path().join("top.txt"), "x").unwrap();
+        let opts = DiffOptions { recursive: false, ..Default::default() };
+        let paths: Vec<_> = compare_dirs(l.path(), r.path(), &opts).unwrap().into_iter().map(|e| e.path).collect();
+        assert_eq!(paths, vec!["sub", "top.txt"]);
+    }
+
+    #[test]
+    fn quick_mode_uses_size_and_mtime() {
+        let (l, r) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        fs::write(l.path().join("same_size.txt"), "aaa").unwrap();
+        fs::write(r.path().join("same_size.txt"), "bbb").unwrap(); // 内容は違うがサイズと(ほぼ)時刻が同じ
+        fs::write(l.path().join("len.txt"), "a").unwrap();
+        fs::write(r.path().join("len.txt"), "ab").unwrap();
+        let quick = DiffOptions { quick: true, ..Default::default() };
+        let e = compare_dirs(l.path(), r.path(), &quick).unwrap();
+        assert_eq!(status_of(&e, "same_size.txt"), DirStatus::Same);
+        assert_eq!(status_of(&e, "len.txt"), DirStatus::Modified);
+        // 更新日時が離れていれば変更扱い
+        let f = fs::File::options().write(true).open(r.path().join("same_size.txt")).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(3600)).unwrap();
+        let e = compare_dirs(l.path(), r.path(), &quick).unwrap();
+        assert_eq!(status_of(&e, "same_size.txt"), DirStatus::Modified);
+        // 通常モードは内容で判定
+        let e = compare_dirs(l.path(), r.path(), &DiffOptions::default()).unwrap();
+        assert_eq!(status_of(&e, "same_size.txt"), DirStatus::Modified);
+        assert!(quick_equal(&l.path().join("len.txt"), &l.path().join("missing")).is_err());
     }
 }

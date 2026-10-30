@@ -26,13 +26,15 @@ interface Props {
   onSave?: () => void;
   /** ユーザー操作でスクロールされたとき、先頭に見えている行(1始まり) */
   onScrollLine?: (line: number) => void;
+  /** 検索中の一致箇所（行は1始まり、start は行内の文字位置） */
+  findHit?: { line: number; start: number; length: number };
   /** 行番号(1始まり) → 差分ハイライト。本文と一致しない行（再比較前）は無視する。 */
   highlights?: Map<number, LineHighlight>;
 }
 
 /** 行番号ガターと差分ハイライト層つきテキストエリア（折り返しなしで行とずれないようにする）。 */
 export const NumberedTextarea = forwardRef<EditorHandle, Props>(function NumberedTextarea(
-  { label, value, onChange, onSave, onScrollLine, highlights },
+  { label, value, onChange, onSave, onScrollLine, highlights, findHit },
   ref,
 ) {
   const gutter = useRef<HTMLDivElement>(null);
@@ -83,11 +85,20 @@ export const NumberedTextarea = forwardRef<EditorHandle, Props>(function Numbere
             {lines.map((text, i) => {
               const h = highlights.get(i + 1);
               const fresh = h && h.segments.map((s) => s.text).join("") === text;
+              const hit = findHit && findHit.line === i + 1 ? findHit : null;
               return (
                 <div key={i} className={fresh ? `hl-line hl-${h.kind}` : "hl-line"}>
-                  {fresh
-                    ? h.segments.map((s, j) => (s.changed ? <mark key={j} className="chg">{s.text}</mark> : <span key={j}>{s.text}</span>))
-                    : text}
+                  {hit ? (
+                    <>
+                      {text.slice(0, hit.start)}
+                      <mark className="find-hit">{text.slice(hit.start, hit.start + hit.length)}</mark>
+                      {text.slice(hit.start + hit.length)}
+                    </>
+                  ) : fresh ? (
+                    h.segments.map((s, j) => (s.changed ? <mark key={j} className="chg">{s.text}</mark> : <span key={j}>{s.text}</span>))
+                  ) : (
+                    text
+                  )}
                 </div>
               );
             })}

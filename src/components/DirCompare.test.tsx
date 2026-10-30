@@ -95,4 +95,60 @@ describe("DirCompare", () => {
     expect(screen.queryByRole("button", { name: "b.txt" })).toBeNull();
     expect(onOpen).not.toHaveBeenCalled();
   });
+
+  describe("copy / delete controls", () => {
+    const setup = () => {
+      const onCopy = vi.fn();
+      const onDelete = vi.fn();
+      render(<DirCompare entries={entries} onOpen={vi.fn()} onCopy={onCopy} onDelete={onDelete} />);
+      return { onCopy, onDelete };
+    };
+    const select = (rel: string) => fireEvent.click(screen.getByRole("treeitem", { name: rel }));
+
+    it("is disabled until an item is selected", () => {
+      setup();
+      for (const label of ["→ 右へコピー", "← 左へコピー", "左を削除", "右を削除"]) {
+        expect(screen.getByText(label)).toBeDisabled();
+      }
+    });
+
+    it("enables only the actions that apply to the selected item", () => {
+      const { onCopy, onDelete } = setup();
+      select("gone.txt"); // 左だけにある
+      expect(screen.getByText("← 左へコピー")).toBeDisabled();
+      expect(screen.getByText("右を削除")).toBeDisabled();
+      fireEvent.click(screen.getByText("→ 右へコピー"));
+      expect(onCopy).toHaveBeenLastCalledWith("gone.txt", "left", false);
+      fireEvent.click(screen.getByText("左を削除"));
+      expect(onDelete).toHaveBeenLastCalledWith("gone.txt", "left");
+      select("new.txt"); // 右だけにある
+      expect(screen.getByText("→ 右へコピー")).toBeDisabled();
+      fireEvent.click(screen.getByText("← 左へコピー"));
+      expect(onCopy).toHaveBeenLastCalledWith("new.txt", "right", false);
+      fireEvent.click(screen.getByText("右を削除"));
+      expect(onDelete).toHaveBeenLastCalledWith("new.txt", "right");
+    });
+
+    it("flags an overwrite when both sides have the item, and highlights the selection", () => {
+      const { onCopy } = setup();
+      select("sub/m.txt");
+      expect(screen.getByRole("treeitem", { name: "sub/m.txt" })).toHaveClass("selected");
+      fireEvent.click(screen.getByText("→ 右へコピー"));
+      expect(onCopy).toHaveBeenLastCalledWith("sub/m.txt", "left", true);
+      fireEvent.click(screen.getByText("← 左へコピー"));
+      expect(onCopy).toHaveBeenLastCalledWith("sub/m.txt", "right", true);
+    });
+
+    it("has no controls in single mode", () => {
+      render(<DirCompare entries={entries} onOpen={vi.fn()} single />);
+      expect(screen.queryByText("→ 右へコピー")).toBeNull();
+    });
+
+    it("tolerates missing handlers", () => {
+      render(<DirCompare entries={entries} onOpen={vi.fn()} />);
+      select("gone.txt");
+      fireEvent.click(screen.getByText("→ 右へコピー"));
+      fireEvent.click(screen.getByText("左を削除"));
+    });
+  });
 });

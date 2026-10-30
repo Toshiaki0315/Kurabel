@@ -2,6 +2,7 @@ pub mod binary;
 pub mod commands;
 pub mod compare;
 pub mod dirdiff;
+pub mod fileops;
 pub mod textcodec;
 pub mod textdiff;
 
@@ -53,7 +54,12 @@ pub fn run() {
             commands::compare_paths,
             commands::diff_text,
             commands::path_kind,
-            commands::save_text
+            commands::save_text,
+            commands::copy_entry,
+            commands::delete_entry,
+            commands::make_patch,
+            commands::write_patch,
+            commands::initial_paths
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
