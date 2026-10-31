@@ -116,6 +116,14 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
             <input type="checkbox" checked={settings.options.detect_moves} onChange={() => toggle("detect_moves")} />
             移動した行を検出して印を付ける
           </label>
+          <label>
+            <input type="checkbox" checked={settings.showWhitespace} onChange={() => onChange({ ...settings, showWhitespace: !settings.showWhitespace })} />
+            空白・タブ・改行を記号で表示する
+          </label>
+          <label>
+            <input type="checkbox" checked={settings.syntax} onChange={() => onChange({ ...settings, syntax: !settings.syntax })} />
+            シンタックスハイライト（ファイルの拡張子から判定）
+          </label>
         </fieldset>
         <fieldset>
           <legend>フォルダの比較</legend>

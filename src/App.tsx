@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { comparePaths, confirmAction, confirmDiscard, copyEntry, deleteEntry, initialPaths, merge3Files, pathKind, pickPath } from "./api";
+import { compareArchiveEntry, comparePaths, confirmAction, confirmDiscard, copyEntry, deleteEntry, initialPaths, merge3Files, pathKind, pickPath } from "./api";
 import { BinaryCompare } from "./components/BinaryCompare";
 import { DirCompare } from "./components/DirCompare";
 import { PathPicker } from "./components/PathPicker";
@@ -21,6 +21,8 @@ interface Child {
   left: string;
   right: string;
   result: Comparison;
+  /** アーカイブ内のファイル（読み取り専用。保存・編集・マージはできない） */
+  readOnly?: boolean;
 }
 
 const encodingLabel = (e: TextEncoding) => (e.bom ? `${e.name} (BOM)` : e.name);
@@ -46,6 +48,11 @@ interface ResultProps {
   leftPath: string | null;
   rightPath: string | null;
   onOpen?: (rel: string) => void;
+  showWhitespace?: boolean;
+  syntax?: boolean;
+  /** アーカイブ内のファイルを開いているときは true（読み取り専用）。language の判定にはファイル名を使う */
+  readOnly?: boolean;
+  languagePath?: string;
   onThreeWay?: () => void;
   onCopy?: (rel: string, from: "left" | "right", overwrite: boolean) => void;
   onDelete?: (rel: string, side: "left" | "right") => void;
@@ -56,11 +63,11 @@ function Result(props: ResultProps) {
   const { result } = props;
   switch (result.kind) {
     case "text":
-      return <TextCompare leftText={result.left_text} rightText={result.right_text} rows={result.rows} mode={props.mode} options={props.options} onDirtyChange={props.onDirtyChange} leftPath={props.leftPath} rightPath={props.rightPath} leftEncoding={result.left_encoding} rightEncoding={result.right_encoding} onThreeWay={props.onThreeWay} />;
+      return <TextCompare leftText={result.left_text} rightText={result.right_text} rows={result.rows} mode={props.mode} options={props.options} onDirtyChange={props.onDirtyChange} leftPath={props.leftPath} rightPath={props.rightPath} leftEncoding={result.left_encoding} rightEncoding={result.right_encoding} onThreeWay={props.onThreeWay} readOnly={props.readOnly} languagePath={props.languagePath} showWhitespace={props.showWhitespace} syntax={props.syntax} />;
     case "binary":
       return <BinaryCompare rows={result.rows} truncated={result.truncated} />;
     case "directory":
-      return <DirCompare entries={result.entries} onOpen={props.onOpen ?? (() => {})} onCopy={props.onCopy} onDelete={props.onDelete} leftRoot={props.leftPath} rightRoot={props.rightPath} single={props.leftPath === null || props.rightPath === null} />;
+      return <DirCompare entries={result.entries} onOpen={props.onOpen ?? (() => {})} onCopy={props.onCopy} onDelete={props.onDelete} leftRoot={props.leftPath} rightRoot={props.rightPath} archive={result.archive} single={props.leftPath === null || props.rightPath === null} />;
   }
 }
 
@@ -252,10 +259,14 @@ export default function App() {
 
   const openChild = async (rel: string) => {
     if (!left || !right) return;
-    const l = joinPath(left, rel);
-    const r = joinPath(right, rel);
+    const inArchive = result?.kind === "directory" && result.archive === true;
+    const l = inArchive ? left : joinPath(left, rel);
+    const r = inArchive ? right : joinPath(right, rel);
     try {
-      setChild({ rel, left: l, right: r, result: await comparePaths(l, r, mode, options, AUTO_ENCODING) });
+      const childResult = inArchive
+        ? await compareArchiveEntry(left, right, rel, mode, options, AUTO_ENCODING)
+        : await comparePaths(l, r, mode, options, AUTO_ENCODING);
+      setChild({ rel, left: l, right: r, result: childResult, readOnly: inArchive });
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -308,10 +319,10 @@ export default function App() {
               <button onClick={() => void back()}>← ディレクトリ比較に戻る</button>
               <span>{child.rel}</span>
             </div>
-            <Result key={child.rel} result={child.result} mode={mode} options={options} onDirtyChange={setDirty} leftPath={child.left} rightPath={child.right} />
+            <Result key={child.rel} result={child.result} mode={mode} options={options} showWhitespace={settings.showWhitespace} syntax={settings.syntax} onDirtyChange={setDirty} leftPath={child.left} rightPath={child.right} readOnly={child.readOnly} languagePath={child.readOnly ? child.rel : undefined} />
           </>
         ) : result ? (
-          <Result key={runId} result={result} mode={mode} options={options} onDirtyChange={setDirty} leftPath={left} rightPath={right} onOpen={openChild} onThreeWay={() => void startThreeWay()} onCopy={copyTo} onDelete={removeFrom} />
+          <Result key={runId} result={result} mode={mode} options={options} showWhitespace={settings.showWhitespace} syntax={settings.syntax} onDirtyChange={setDirty} leftPath={left} rightPath={right} onOpen={openChild} onThreeWay={() => void startThreeWay()} onCopy={copyTo} onDelete={removeFrom} />
         ) : (
           <p className="empty">比較する2つのファイルまたはフォルダを選択、またはウィンドウへドロップしてください。</p>
         )}

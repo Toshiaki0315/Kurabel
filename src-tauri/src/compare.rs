@@ -1,5 +1,6 @@
 //! パスの判定と、種別に応じた比較の振り分け。
 
+use crate::archive;
 use crate::binary::{self, BinaryRow};
 use crate::merge3::{self, MergeChunk};
 use crate::textcodec::{self, Decoded, EncodingChoice, TextEncoding};
@@ -41,6 +42,8 @@ pub enum Comparison {
     },
     Directory {
         entries: Vec<DirEntry>,
+        /// zip などのアーカイブの中身（読み取り専用。コピー・削除はできない）
+        archive: bool,
     },
 }
 
@@ -97,7 +100,10 @@ pub fn write_text(path: &Path, content: &str, encoding: &TextEncoding) -> Result
 /// 片方だけ開いているとき: そのファイル/フォルダをそのまま表示するための結果を返す（反対側は空）。
 pub fn view_single(path: &Path, left_side: bool, options: &DiffOptions, encoding: Option<&str>) -> Result<Comparison, String> {
     if classify(path)? == PathKind::Directory {
-        return Ok(Comparison::Directory { entries: dirdiff::list_dir(path, left_side, options)? });
+        return Ok(Comparison::Directory { entries: dirdiff::list_dir(path, left_side, options)?, archive: false });
+    }
+    if archive::is_archive(path) {
+        return Ok(Comparison::Directory { entries: archive::list_archive(path, left_side)?, archive: true });
     }
     let data = read_limited(path)?;
     let Some(decoded) = decode_side(&data, encoding)? else {
@@ -194,14 +200,33 @@ pub fn compare_paths(
     match (classify(left)?, classify(right)?) {
         (PathKind::Directory, PathKind::Directory) => Ok(Comparison::Directory {
             entries: dirdiff::compare_dirs(left, right, options)?,
+            archive: false,
         }),
+        (PathKind::File, PathKind::File) if archive::is_archive(left) && archive::is_archive(right) => {
+            Ok(Comparison::Directory { entries: archive::compare_archives(left, right)?, archive: true })
+        }
         (PathKind::File, PathKind::File) => compare_files(left, right, mode, options, encodings),
         _ => Err("ファイルとディレクトリは比較できません".to_string()),
     }
 }
 
 fn compare_files(left: &Path, right: &Path, mode: DiffMode, options: &DiffOptions, encodings: &EncodingChoice) -> Result<Comparison, String> {
-    let (l, r) = (read_limited(left)?, read_limited(right)?);
+    compare_bytes(read_limited(left)?, read_limited(right)?, mode, options, encodings)
+}
+
+/// アーカイブ内の同名ファイル同士を比較する（ファイルの比較と同じ結果を返す）。
+pub fn compare_archive_entry(
+    left: &Path,
+    right: &Path,
+    rel: &str,
+    mode: DiffMode,
+    options: &DiffOptions,
+    encodings: &EncodingChoice,
+) -> Result<Comparison, String> {
+    compare_bytes(archive::read_entry(left, rel)?, archive::read_entry(right, rel)?, mode, options, encodings)
+}
+
+fn compare_bytes(l: Vec<u8>, r: Vec<u8>, mode: DiffMode, options: &DiffOptions, encodings: &EncodingChoice) -> Result<Comparison, String> {
     if let (Some(ld), Some(rd)) = (decode_side(&l, encodings.left.as_deref())?, decode_side(&r, encodings.right.as_deref())?) {
         let rows = textdiff::diff_text(&ld.text, &rd.text, mode, options);
         let (left_eol, right_eol) = (detect_eol(&ld.text), detect_eol(&rd.text));
@@ -265,7 +290,7 @@ mod tests {
             _ => panic!("expected binary"),
         }
         match view_single(d.path(), true, &DiffOptions::default(), None).unwrap() {
-            Comparison::Directory { entries } => assert_eq!(entries.len(), 1),
+            Comparison::Directory { entries, .. } => assert_eq!(entries.len(), 1),
             _ => panic!("expected directory"),
         }
         assert!(view_single(&d.path().join("none"), true, &DiffOptions::default(), None).is_err());
@@ -406,7 +431,7 @@ mod tests {
         let (l, r) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         fs::write(l.path().join("a"), "x").unwrap();
         match compare_paths(l.path(), r.path(), DiffMode::Line, &DiffOptions::default(), &EncodingChoice::default()).unwrap() {
-            Comparison::Directory { entries } => assert_eq!(entries.len(), 1),
+            Comparison::Directory { entries, .. } => assert_eq!(entries.len(), 1),
             _ => panic!("expected directory"),
         }
     }
@@ -472,7 +497,7 @@ mod tests {
         fs::write(d.path().join("skip.obj"), "x").unwrap();
         let opts = DiffOptions { exclude: vec!["*.obj".into()], ..Default::default() };
         match view_single(d.path(), true, &opts, None).unwrap() {
-            Comparison::Directory { entries } => assert_eq!(entries.len(), 1),
+            Comparison::Directory { entries, .. } => assert_eq!(entries.len(), 1),
             _ => panic!("expected directory"),
         }
     }
@@ -525,5 +550,56 @@ mod tests {
         let big = "a".repeat(MAX_FILE_SIZE as usize + 1);
         assert!(create_text(&d.path().join("big.txt"), &big, &utf8()).is_err());
         assert!(!d.path().join("big.txt").exists());
+    }
+
+    fn zip_with(dir: &Path, name: &str, files: &[(&str, &[u8])]) -> std::path::PathBuf {
+        use std::io::Write;
+        let path = dir.join(name);
+        let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+        for (n, data) in files {
+            zip.start_file(*n, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn two_archives_are_compared_as_folders_and_one_archive_is_listed() {
+        let d = tempfile::tempdir().unwrap();
+        let l = zip_with(d.path(), "l.zip", &[("a.txt", b"one\n"), ("b.bin", &[0, 1])]);
+        let r = zip_with(d.path(), "r.zip", &[("a.txt", b"two\n")]);
+        match compare_paths(&l, &r, DiffMode::Line, &DiffOptions::default(), &EncodingChoice::default()).unwrap() {
+            Comparison::Directory { entries, archive } => {
+                assert!(archive);
+                assert_eq!(entries.len(), 2);
+            }
+            _ => panic!("expected an archive listing"),
+        }
+        match view_single(&l, true, &DiffOptions::default(), None).unwrap() {
+            Comparison::Directory { entries, archive } => assert!(archive && entries.len() == 2),
+            _ => panic!("expected an archive listing"),
+        }
+        // 片方だけがアーカイブなら、通常のファイル比較（バイナリ）になる
+        let plain = d.path().join("plain.txt");
+        fs::write(&plain, "x").unwrap();
+        assert!(matches!(
+            compare_paths(&l, &plain, DiffMode::Line, &DiffOptions::default(), &EncodingChoice::default()).unwrap(),
+            Comparison::Binary { .. }
+        ));
+    }
+
+    #[test]
+    fn compares_a_file_inside_two_archives_like_two_files() {
+        let d = tempfile::tempdir().unwrap();
+        let l = zip_with(d.path(), "l.zip", &[("dir/a.txt", b"one\nsame\n"), ("img.bin", &[0, 1, 2])]);
+        let r = zip_with(d.path(), "r.zip", &[("dir/a.txt", b"two\nsame\n"), ("img.bin", &[0, 9, 2])]);
+        let (o, e) = (DiffOptions::default(), EncodingChoice::default());
+        match compare_archive_entry(&l, &r, "dir/a.txt", DiffMode::Line, &o, &e).unwrap() {
+            Comparison::Text { rows, .. } => assert!(rows.iter().any(|r| r.kind != crate::textdiff::RowKind::Equal)),
+            _ => panic!("expected text"),
+        }
+        assert!(matches!(compare_archive_entry(&l, &r, "img.bin", DiffMode::Line, &o, &e).unwrap(), Comparison::Binary { .. }));
+        assert!(compare_archive_entry(&l, &r, "missing.txt", DiffMode::Line, &o, &e).is_err());
     }
 }

@@ -16,7 +16,7 @@ const setup = (settings = DEFAULT_SETTINGS) => {
 
 describe("SettingsDialog", () => {
   it("reflects the current settings", () => {
-    setup({ mode: "word", options: { ...DEFAULT_OPTIONS, ignore_whitespace: true } });
+    setup({ ...DEFAULT_SETTINGS, mode: "word", options: { ...DEFAULT_OPTIONS, ignore_whitespace: true } });
     expect(screen.getByRole("dialog", { name: "設定" })).toBeInTheDocument();
     expect(screen.getByLabelText("単語単位")).toBeChecked();
     expect(screen.getByLabelText("行単位")).not.toBeChecked();
@@ -29,9 +29,9 @@ describe("SettingsDialog", () => {
     fireEvent.click(screen.getByLabelText("単語単位"));
     expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, mode: "word" });
     fireEvent.click(screen.getByLabelText("空白の違い"));
-    expect(onChange).toHaveBeenLastCalledWith({ mode: "line", options: { ...DEFAULT_OPTIONS, ignore_whitespace: true } });
+    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, options: { ...DEFAULT_OPTIONS, ignore_whitespace: true } });
     fireEvent.click(screen.getByLabelText("大文字小文字の違い"));
-    expect(onChange).toHaveBeenLastCalledWith({ mode: "line", options: { ...DEFAULT_OPTIONS, ignore_case: true } });
+    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, options: { ...DEFAULT_OPTIONS, ignore_case: true } });
   });
 
   it("closes with the button, Escape or a click on the backdrop, but not on the dialog itself", () => {
@@ -125,5 +125,15 @@ describe("SettingsDialog", () => {
       await new Promise((r) => setTimeout(r, 20));
       expect(screen.queryByRole("alert")).toBeNull();
     });
+  });
+
+  it("toggles whitespace markers and syntax highlighting", () => {
+    const { onChange } = setup();
+    expect(screen.getByLabelText("シンタックスハイライト（ファイルの拡張子から判定）")).toBeChecked();
+    expect(screen.getByLabelText("空白・タブ・改行を記号で表示する")).not.toBeChecked();
+    fireEvent.click(screen.getByLabelText("空白・タブ・改行を記号で表示する"));
+    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, showWhitespace: true });
+    fireEvent.click(screen.getByLabelText("シンタックスハイライト（ファイルの拡張子から判定）"));
+    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, syntax: false });
   });
 });

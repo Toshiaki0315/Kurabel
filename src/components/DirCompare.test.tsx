@@ -211,4 +211,14 @@ describe("DirCompare", () => {
       expect(screen.queryByText("レポートを保存…")).toBeNull();
     });
   });
+
+  describe("archive contents", () => {
+    it("is read-only: no copy or delete controls, but filtering and the report remain", () => {
+      render(<DirCompare entries={entries} onOpen={vi.fn()} archive leftRoot="/a.zip" rightRoot="/b.zip" />);
+      for (const label of ["→ 右へコピー", "← 左へコピー", "左を削除", "右を削除"]) expect(screen.queryByText(label)).toBeNull();
+      expect(screen.getByLabelText("表示する差分")).toBeInTheDocument();
+      expect(screen.getByText("レポートを保存…")).toBeInTheDocument();
+      expect(screen.getByText(/件の差分/)).toBeInTheDocument();
+    });
+  });
 });

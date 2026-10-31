@@ -176,4 +176,38 @@ describe("NumberedTextarea", () => {
       window.requestAnimationFrame = raf;
     });
   });
+
+  describe("syntax colors, whitespace markers and CRLF", () => {
+    it("shows token colors in the overlay and makes the textarea text transparent", () => {
+      const tokens = [[{ start: 0, end: 5, type: "keyword" as const }], []];
+      const { container } = render(<NumberedTextarea label="t" value={"const a\nb"} onChange={vi.fn()} highlights={new Map()} tokens={tokens} />);
+      expect(container.querySelector(".numbered")).toHaveClass("syntax-on");
+      expect(container.querySelector(".hl-layer .tok-keyword")!.textContent).toBe("const");
+    });
+
+    it("does not make the text transparent without tokens", () => {
+      const { container } = render(<NumberedTextarea label="t" value="x" onChange={vi.fn()} highlights={new Map()} />);
+      expect(container.querySelector(".numbered")).not.toHaveClass("syntax-on");
+    });
+
+    it("shows whitespace and end-of-line markers on every kind of line", () => {
+      const highlights = new Map<number, LineHighlight>([[2, { kind: "replace", segments: [{ text: "b c", changed: true }] }]]);
+      const { container } = render(
+        <NumberedTextarea label="t" value={"a b\nb c\nplain"} onChange={vi.fn()} highlights={highlights} showWs findHit={{ line: 3, start: 0, length: 2 }} />,
+      );
+      const lines = container.querySelectorAll(".hl-line");
+      expect(lines).toHaveLength(3);
+      lines.forEach((l) => expect(l.querySelector(".ws.eol")).not.toBeNull());
+      expect(lines[0].querySelector(".ws")!.textContent).toBe("·");
+      expect(lines[1].querySelector("mark.chg .ws")).not.toBeNull();
+      expect(lines[2].querySelector("mark.find-hit")!.textContent).toBe("pl");
+    });
+
+    it("matches diff lines for files with CRLF line endings", () => {
+      const highlights = new Map<number, LineHighlight>([[1, { kind: "replace", segments: [{ text: "x", changed: true }] }]]);
+      const { container } = render(<NumberedTextarea label="t" value={"x\r\ny\r\n"} onChange={vi.fn()} highlights={highlights} />);
+      expect(container.querySelector(".hl-replace")).not.toBeNull();
+      expect(container.querySelector(".hl-layer")!.textContent).not.toContain("\r");
+    });
+  });
 });

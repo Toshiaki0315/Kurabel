@@ -119,3 +119,17 @@ main { position: relative; }
 .dir-date { width: 9.5em; opacity: .75; flex: none; }
 .dir-date.newer { font-weight: 700; opacity: 1; }
 .regex-errors { margin: 0; padding-left: 20px; font-size: 12px; }
+.syntax-on textarea { color: transparent; caret-color: CanvasText; }
+:root { --tok-keyword:#8a2be2; --tok-string:#0a7d3e; --tok-comment:#6b7280; --tok-number:#b45309; --tok-tag:#1d4ed8; --tok-attr:#a21caf; --ws:#8a96b0; }
+@media (prefers-color-scheme: dark) { :root { --tok-keyword:#c792ea; --tok-string:#8bd49c; --tok-comment:#8b93a5; --tok-number:#f0a868; --tok-tag:#82aaff; --tok-attr:#e3a8f0; --ws:#6b7794; } }
+.tok-keyword { color: var(--tok-keyword); font-weight: 600; }
+.tok-string { color: var(--tok-string); }
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-number { color: var(--tok-number); }
+.tok-tag { color: var(--tok-tag); }
+.tok-attr { color: var(--tok-attr); }
+.ws { color: var(--ws); opacity: .8; }
+.ws.tab { border-bottom: 1px solid var(--ws); }
+.ws.eol { margin-left: 2px; user-select: none; }
+.hl-line { tab-size: 8; }
+.editor textarea { tab-size: 8; }

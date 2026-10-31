@@ -69,6 +69,19 @@ pub fn create_text(path: String, content: String, encoding: TextEncoding) -> Res
     compare::create_text(path.as_ref(), &content, &encoding)
 }
 
+/// アーカイブ（zip など）内の同名ファイル同士を比較する。
+#[tauri::command]
+pub fn compare_archive_entry(
+    left: String,
+    right: String,
+    rel: String,
+    mode: DiffMode,
+    options: DiffOptions,
+    encodings: EncodingChoice,
+) -> Result<Comparison, String> {
+    compare::compare_archive_entry(left.as_ref(), right.as_ref(), &rel, mode, &options, &encodings)
+}
+
 #[tauri::command]
 pub fn path_kind(path: String) -> Result<PathKind, String> {
     compare::classify(path.as_ref())
@@ -171,5 +184,11 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         write_report(d.path().join("r.html").to_string_lossy().into_owned(), "<p/>".into()).unwrap();
         assert!(write_report(d.path().join("r.txt").to_string_lossy().into_owned(), "x".into()).is_err());
+    }
+
+    #[test]
+    fn compare_archive_entry_reports_errors() {
+        let e = compare_archive_entry("/nonexistent.zip".into(), "/nonexistent.zip".into(), "a".into(), DiffMode::Line, DiffOptions::default(), EncodingChoice::default());
+        assert!(e.is_err());
     }
 }

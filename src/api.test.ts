@@ -16,6 +16,7 @@ import {
   confirmAction,
   confirmDiscard,
   checkRegex,
+  compareArchiveEntry,
   copyEntry,
   createText,
   deleteEntry,
@@ -152,5 +153,14 @@ describe("api", () => {
     save.mockResolvedValue("/chosen.html");
     expect(await pickReportPath("x.html")).toBe("/chosen.html");
     expect(save).toHaveBeenLastCalledWith({ defaultPath: "x.html", filters: [{ name: "HTML レポート", extensions: ["html", "htm"] }] });
+  });
+
+  it("compares an entry inside two archives and fills in omitted right text", async () => {
+    invoke.mockResolvedValueOnce({ kind: "text", rows: [{ kind: "equal", left: { line_no: 1, segments: [{ text: "x", changed: false }] }, right: { line_no: 1, segments: [] } }] });
+    const c = await compareArchiveEntry("/l.zip", "/r.zip", "dir/a.txt", "line", DEFAULT_OPTIONS);
+    expect(invoke).toHaveBeenLastCalledWith("compare_archive_entry", { left: "/l.zip", right: "/r.zip", rel: "dir/a.txt", mode: "line", options: DEFAULT_OPTIONS, encodings: AUTO_ENCODING });
+    expect(c.kind === "text" && c.rows[0].right!.segments[0].text).toBe("x");
+    invoke.mockResolvedValueOnce({ kind: "binary", rows: [] });
+    expect((await compareArchiveEntry("/l.zip", "/r.zip", "b", "line", DEFAULT_OPTIONS, { left: "UTF-8", right: null })).kind).toBe("binary");
   });
 });

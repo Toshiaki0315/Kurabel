@@ -122,4 +122,4 @@ export type Comparison =
       rows: DiffRow[];
     }
   | { kind: "binary"; left_size: number; right_size: number; truncated: boolean; rows: BinaryRow[] }
-  | { kind: "directory"; entries: DirEntry[] };
+  | { kind: "directory"; entries: DirEntry[]; archive?: boolean };

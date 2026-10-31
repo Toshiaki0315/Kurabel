@@ -1,5 +1,7 @@
 import { forwardRef, useImperativeHandle, useRef, useState, type ReactNode } from "react";
+import type { Token } from "../lib/syntax";
 import type { RowKind, Segment } from "../types";
+import { EolMarker, renderSegments } from "./Segments";
 
 export const LINE_HEIGHT = 18;
 /** これを超える行数では、画面に見える範囲の行だけを描画する（巨大なファイルで重くならないように） */
@@ -35,6 +37,10 @@ interface Props {
   onSave?: () => void;
   /** ユーザー操作でスクロールされたとき、先頭に見えている行(1始まり) */
   onScrollLine?: (line: number) => void;
+  /** 行ごとのシンタックスのトークン。指定すると、本文の文字を透明にして、背後の色付きの文字を見せる */
+  tokens?: Token[][];
+  /** 空白・タブ・改行を記号で表示する */
+  showWs?: boolean;
   /** 検索中の一致箇所（行は1始まり、start は行内の文字位置） */
   findHit?: { line: number; start: number; length: number };
   /** 行番号(1始まり) → 差分ハイライト。本文と一致しない行（再比較前）は無視する。 */
@@ -43,7 +49,7 @@ interface Props {
 
 /** 行番号ガターと差分ハイライト層つきテキストエリア（折り返しなしで行とずれないようにする）。 */
 export const NumberedTextarea = forwardRef<EditorHandle, Props>(function NumberedTextarea(
-  { label, value, onChange, onSave, onScrollLine, highlights, findHit, onFocusPane, active },
+  { label, value, onChange, onSave, onScrollLine, highlights, findHit, onFocusPane, active, tokens, showWs },
   ref,
 ) {
   const gutter = useRef<HTMLDivElement>(null);
@@ -109,7 +115,7 @@ export const NumberedTextarea = forwardRef<EditorHandle, Props>(function Numbere
   }));
 
   return (
-    <div className={active ? "numbered active-pane" : "numbered"}>
+    <div className={`numbered${active ? " active-pane" : ""}${tokens ? " syntax-on" : ""}`}>
       <div className="gutter" ref={gutter} aria-hidden="true">
         {windowed(
           lines.slice(from, to).map((_, k) => (
@@ -120,27 +126,34 @@ export const NumberedTextarea = forwardRef<EditorHandle, Props>(function Numbere
       <div className="editor">
         {highlights && (
           <div className="hl-layer" ref={layer} aria-hidden="true">
-            {windowed(lines.slice(from, to).map((text, k) => {
-              const i = from + k;
-              const h = highlights.get(i + 1);
-              const fresh = h && h.segments.map((s) => s.text).join("") === text;
-              const hit = findHit && findHit.line === i + 1 ? findHit : null;
-              return (
-                <div key={i} className={fresh ? `hl-line hl-${h.kind}${h.moved ? " hl-moved" : ""}` : "hl-line"}>
-                  {hit ? (
-                    <>
-                      {text.slice(0, hit.start)}
-                      <mark className="find-hit">{text.slice(hit.start, hit.start + hit.length)}</mark>
-                      {text.slice(hit.start + hit.length)}
-                    </>
-                  ) : fresh ? (
-                    h.segments.map((s, j) => (s.changed ? <mark key={j} className="chg">{s.text}</mark> : <span key={j}>{s.text}</span>))
-                  ) : (
-                    text
-                  )}
-                </div>
-              );
-            }))}
+            {windowed(
+              lines.slice(from, to).map((raw, k) => {
+                const i = from + k;
+                const text = raw.replace(/\r$/, ""); // CRLF の \r は本文に含めない（差分の行と照合できるように）
+                const h = highlights.get(i + 1);
+                const fresh = h && h.segments.map((s) => s.text).join("") === text;
+                const hit = findHit && findHit.line === i + 1 ? findHit : null;
+                const toks = tokens?.[i];
+                return (
+                  <div key={i} className={fresh ? `hl-line hl-${h.kind}${h.moved ? " hl-moved" : ""}` : "hl-line"}>
+                    {hit ? (
+                      <>
+                        {text.slice(0, hit.start)}
+                        <mark className="find-hit">{text.slice(hit.start, hit.start + hit.length)}</mark>
+                        {text.slice(hit.start + hit.length)}
+                      </>
+                    ) : fresh ? (
+                      renderSegments(h.segments, toks, showWs)
+                    ) : toks || showWs ? (
+                      renderSegments([{ text, changed: false }], toks, showWs)
+                    ) : (
+                      text
+                    )}
+                    {showWs && <EolMarker />}
+                  </div>
+                );
+              }),
+            )}
           </div>
         )}
         <textarea

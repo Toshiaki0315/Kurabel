@@ -3,9 +3,13 @@ import { DEFAULT_OPTIONS, type DiffMode, type DiffOptions } from "../types";
 export interface Settings {
   mode: DiffMode;
   options: DiffOptions;
+  /** 空白・タブ・改行を記号で表示する（表示だけの設定で、比較には影響しない） */
+  showWhitespace: boolean;
+  /** シンタックスハイライト */
+  syntax: boolean;
 }
 
-export const DEFAULT_SETTINGS: Settings = { mode: "line", options: DEFAULT_OPTIONS };
+export const DEFAULT_SETTINGS: Settings = { mode: "line", options: DEFAULT_OPTIONS, showWhitespace: false, syntax: true };
 
 const KEY = "kurabel.settings";
 
@@ -31,6 +35,8 @@ export function loadSettings(): Settings {
     const o = v?.options;
     return {
       mode: v?.mode === "word" ? "word" : "line",
+      showWhitespace: v?.showWhitespace === true,
+      syntax: v?.syntax !== false,
       options: {
         ignore_whitespace: o?.ignore_whitespace === true,
         ignore_case: o?.ignore_case === true,

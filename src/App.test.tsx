@@ -10,6 +10,7 @@ const initialPaths = vi.fn();
 const copyEntry = vi.fn();
 const deleteEntry = vi.fn();
 const merge3Files = vi.fn();
+const compareArchiveEntry = vi.fn();
 let closeGuard: () => Promise<boolean>;
 let menuOpenSettings: () => void;
 let dropHandler: (paths: string[], side: "left" | "right") => void;
@@ -23,6 +24,7 @@ vi.mock("./api", () => ({
   copyEntry: (...a: unknown[]) => copyEntry(...a),
   deleteEntry: (...a: unknown[]) => deleteEntry(...a),
   merge3Files: (...a: unknown[]) => merge3Files(...a),
+  compareArchiveEntry: (...a: unknown[]) => compareArchiveEntry(...a),
   createText: vi.fn(),
   pickSavePath: vi.fn(),
   saveText: vi.fn().mockResolvedValue(undefined),
@@ -86,6 +88,7 @@ describe("App", () => {
     copyEntry.mockReset();
     deleteEntry.mockReset();
     merge3Files.mockReset();
+    compareArchiveEntry.mockReset();
     initialPaths.mockReset();
     initialPaths.mockResolvedValue([]);
     localStorage.clear();
@@ -622,6 +625,51 @@ describe("App", () => {
       await screen.findByLabelText("マージ結果");
       await act(async () => dropHandler(["/c.txt", "/d.txt"], "left"));
       await waitFor(() => expect(screen.queryByLabelText("マージ結果")).toBeNull());
+    });
+  });
+
+  describe("archives (zip)", () => {
+    const archiveResult = {
+      kind: "directory",
+      archive: true,
+      entries: [
+        { path: "src", left: "directory", right: "directory", status: "same" },
+        { path: "src/app.js", left: "file", right: "file", status: "modified" },
+      ],
+    };
+
+    async function openZips() {
+      comparePaths.mockImplementation(async () => ({ ...archiveResult }));
+      render(<App />);
+      await act(async () => dropHandler(["/a.zip", "/b.zip"], "left"));
+      await screen.findByLabelText("表示する差分");
+    }
+
+    it("shows the contents read-only: no copy or delete controls", async () => {
+      await openZips();
+      expect(screen.queryByText("→ 右へコピー")).toBeNull();
+      expect(screen.queryByText("左を削除")).toBeNull();
+      expect(screen.getByText("レポートを保存…")).toBeInTheDocument();
+    });
+
+    it("opens a file inside the archives through the archive command, read-only, and returns", async () => {
+      compareArchiveEntry.mockResolvedValue({ ...textResult, rows: [] });
+      await openZips();
+      fireEvent.click(screen.getAllByText("app.js")[0]);
+      await waitFor(() => expect(compareArchiveEntry).toHaveBeenCalledWith("/a.zip", "/b.zip", "src/app.js", "line", OPTS, AUTO_ENCODING));
+      expect(comparePaths).not.toHaveBeenCalledWith("/a.zip/src/app.js", expect.anything(), expect.anything(), expect.anything(), expect.anything());
+      expect(await screen.findByText("← ディレクトリ比較に戻る")).toBeInTheDocument();
+      for (const label of ["編集", "3ウェイ…"]) expect(screen.queryByText(label)).toBeNull();
+      expect(screen.queryByRole("button", { name: "左を保存" })).toBeNull();
+      fireEvent.click(screen.getByText("← ディレクトリ比較に戻る"));
+      expect(await screen.findByLabelText("表示する差分")).toBeInTheDocument();
+    });
+
+    it("shows an error when the entry cannot be read", async () => {
+      compareArchiveEntry.mockRejectedValue("上限を超えています");
+      await openZips();
+      fireEvent.click(screen.getAllByText("app.js")[0]);
+      expect(await screen.findByRole("alert")).toHaveTextContent("上限を超えています");
     });
   });
 });

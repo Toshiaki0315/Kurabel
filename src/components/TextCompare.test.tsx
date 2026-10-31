@@ -623,4 +623,147 @@ describe("TextCompare", () => {
       expect(screen.queryByText("レポートを保存…")).toBeNull();
     });
   });
+
+  describe("syntax highlighting and whitespace markers", () => {
+    const seg = (text: string, changed = false) => ({ text, changed });
+    const rowsJs: DiffRow[] = [
+      { kind: "equal", left: { line_no: 1, segments: [seg("const x = 1;")] }, right: { line_no: 1, segments: [seg("const x = 1;")] } },
+      { kind: "replace", left: { line_no: 2, segments: [seg("\tlet  y = "), seg("2", true)] }, right: { line_no: 2, segments: [seg("\tlet  y = "), seg("3", true)] } },
+    ];
+    const TEXT_L = "const x = 1;\n\tlet  y = 2";
+    const TEXT_R = "const x = 1;\n\tlet  y = 3";
+    const mk = (props: Partial<React.ComponentProps<typeof TextCompare>> = {}) =>
+      render(<TextCompare leftText={TEXT_L} rightText={TEXT_R} rows={rowsJs} mode="line" options={OPTS} leftPath="/src/app.js" rightPath="/src/app2.js" leftEncoding={UTF8} rightEncoding={UTF8} {...props} />);
+    const table = (c: HTMLElement) => c.querySelector("table.diff-table")!;
+
+    it("colors tokens from the file extension, on both sides, keeping the diff highlight", () => {
+      const { container } = mk();
+      const keywords = table(container).querySelectorAll(".tok-keyword");
+      expect(Array.from(keywords).map((k) => k.textContent)).toEqual(["const", "const", "let", "let"]);
+      expect(table(container).querySelector("mark.chg")!.textContent).toBe("2");
+      expect(table(container).querySelector(".tok-number")).not.toBeNull();
+    });
+
+    it("can be turned off, and is skipped for unknown extensions", () => {
+      expect(table(mk({ syntax: false }).container).querySelector("[class^=tok-]")).toBeNull();
+      const { container } = mk({ leftPath: "/notes.txt", rightPath: "/notes2.txt" });
+      expect(table(container).querySelector("[class^=tok-]")).toBeNull();
+    });
+
+    it("uses the language of the name given for archive entries", () => {
+      const { container } = mk({ leftPath: "/a.zip", rightPath: "/b.zip", languagePath: "src/app.js", readOnly: true });
+      expect(table(container).querySelector(".tok-keyword")).not.toBeNull();
+    });
+
+    it("does not color a row whose text no longer matches the current text (before the re-diff)", () => {
+      const { container } = mk({ leftText: "const x = 1;\nCHANGED" });
+      const left = table(container).querySelectorAll("tr")[1].querySelector("td.left")!;
+      expect(left.querySelector(".tok-keyword")).toBeNull();
+      expect(table(container).querySelectorAll("tr")[0].querySelector("td.left .tok-keyword")).not.toBeNull();
+    });
+
+    it("shows whitespace and end-of-line markers in the table and in the editor overlay", () => {
+      const { container } = mk({ showWhitespace: true });
+      expect(table(container).querySelectorAll(".ws.eol")).toHaveLength(4);
+      expect(table(container).querySelector(".ws.tab")).not.toBeNull();
+      expect(table(container).textContent).toContain("··");
+      expect(container.querySelector(".hl-layer .ws")).not.toBeNull();
+    });
+
+    it("shows no markers by default", () => {
+      expect(table(mk().container).querySelector(".ws")).toBeNull();
+    });
+
+    it("handles CRLF text: the editor overlay still highlights the differing line", () => {
+      const { container } = mk({ leftText: TEXT_L.replace(/\n/g, "\r\n"), rightText: TEXT_R.replace(/\n/g, "\r\n") });
+      fireEvent.click(screen.getByText("編集"));
+      expect(container.querySelector(".hl-replace")).not.toBeNull();
+    });
+  });
+
+  describe("go to line", () => {
+    const cell = (n: number, text: string) => ({ line_no: n, segments: [{ text, changed: false }] });
+    const grows: DiffRow[] = Array.from({ length: 30 }, (_, i) => ({ kind: "equal" as const, left: cell(i + 1, `L${i + 1}`), right: cell(i + 1, `R${i + 1}`) }));
+    const LT = grows.map((r) => r.left!.segments[0].text).join("\n");
+    const RT = grows.map((r) => r.right!.segments[0].text).join("\n");
+    const gsetup = () => render(<TextCompare leftText={LT} rightText={RT} rows={grows} mode="line" options={OPTS} leftPath="/l" rightPath="/r" leftEncoding={UTF8} rightEncoding={UTF8} />);
+    const open = () => fireEvent.keyDown(window, { key: "g", metaKey: true });
+
+    it("opens with Cmd/Ctrl+G or the button, marks the line on the focused pane, and clamps the number", () => {
+      const { container } = gsetup();
+      expect(screen.queryByLabelText("行番号")).toBeNull();
+      open();
+      expect(screen.getByText("対象: 左ペイン（1〜30 行）")).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("行番号"), { target: { value: "12" } });
+      fireEvent.keyDown(screen.getByLabelText("行番号"), { key: "Enter" });
+      expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-left-line", "12");
+      fireEvent.change(screen.getByLabelText("行番号"), { target: { value: "999" } });
+      fireEvent.click(screen.getByText("移動"));
+      expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-left-line", "30");
+      fireEvent.change(screen.getByLabelText("行番号"), { target: { value: "-5" } });
+      fireEvent.keyDown(screen.getByLabelText("行番号"), { key: "Enter" });
+      expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-left-line", "1");
+      fireEvent.keyDown(screen.getByLabelText("行番号"), { key: "a" });
+    });
+
+    it("ignores an empty or non-numeric entry, and follows the clicked pane", () => {
+      const { container } = gsetup();
+      fireEvent.click(screen.getByText("行へ移動"));
+      fireEvent.click(screen.getByText("移動"));
+      expect(container.querySelector("td.find-hit-cell")).toBeNull();
+      fireEvent.mouseDown(container.querySelector('td[data-right-line="3"]')!);
+      expect(screen.getByText("対象: 右ペイン（1〜30 行）")).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("行番号"), { target: { value: "7" } });
+      fireEvent.click(screen.getByText("移動"));
+      expect(container.querySelector("td.find-hit-cell")).toHaveAttribute("data-right-line", "7");
+    });
+
+    it("closes with Escape or the button and clears the marker", () => {
+      const { container } = gsetup();
+      open();
+      fireEvent.change(screen.getByLabelText("行番号"), { target: { value: "4" } });
+      fireEvent.click(screen.getByText("移動"));
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(screen.queryByLabelText("行番号")).toBeNull();
+      expect(container.querySelector("td.find-hit-cell")).toBeNull();
+      open();
+      fireEvent.click(screen.getByRole("button", { name: "行移動を閉じる" }));
+      expect(screen.queryByLabelText("行番号")).toBeNull();
+    });
+
+    it("marks the whole line in the focused editor in edit mode", () => {
+      const { container } = gsetup();
+      fireEvent.click(screen.getByText("編集"));
+      fireEvent.focus(screen.getByLabelText("右のテキスト"));
+      open();
+      fireEvent.change(screen.getByLabelText("行番号"), { target: { value: "5" } });
+      fireEvent.click(screen.getByText("移動"));
+      expect(container.querySelector("mark.find-hit")!.textContent).toBe("R5");
+    });
+
+    it("is not available for a single opened file", () => {
+      render(<TextCompare leftText="a" rightText="" rows={[]} mode="line" options={OPTS} leftPath="/l" rightPath={null} leftEncoding={UTF8} rightEncoding={UTF8} />);
+      fireEvent.keyDown(window, { key: "g", ctrlKey: true });
+      expect(screen.queryByLabelText("行番号")).toBeNull();
+    });
+  });
+
+  describe("read-only (archive entries)", () => {
+    const cell = (n: number, text: string) => ({ line_no: n, segments: [{ text, changed: true }] });
+    const r: DiffRow[] = [{ kind: "replace", left: cell(1, "a"), right: cell(1, "b") }];
+    const ro = () => render(<TextCompare leftText="a" rightText="b" rows={r} mode="line" options={OPTS} leftPath="/a.zip" rightPath="/b.zip" leftEncoding={UTF8} rightEncoding={UTF8} readOnly />);
+
+    it("has no editing, saving or merge controls, but keeps navigation, patch and report", () => {
+      ro();
+      for (const label of ["編集", "保存", "3ウェイ…"]) expect(screen.queryByText(label)).toBeNull();
+      expect(screen.queryByRole("button", { name: "差分1を左から右へ反映" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "左を保存" })).toBeNull();
+      expect(screen.getByRole("button", { name: "次の差分" })).toBeInTheDocument();
+      expect(screen.getByText("パッチを保存…")).toBeInTheDocument();
+      expect(screen.getByText("レポートを保存…")).toBeInTheDocument();
+      fireEvent.keyDown(window, { key: "f", metaKey: true });
+      fireEvent.change(screen.getByLabelText("検索"), { target: { value: "a" } });
+      expect(screen.queryByLabelText("置換後")).toBeNull(); // 置換は編集モードのときだけ
+    });
+  });
 });

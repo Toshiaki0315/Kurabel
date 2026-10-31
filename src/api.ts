@@ -114,3 +114,18 @@ export function writeReport(path: string, content: string): Promise<void> {
 export function checkRegex(pattern: string): Promise<void> {
   return invoke("check_regex", { pattern });
 }
+
+/** zip などのアーカイブ内の、同名ファイル同士を比較する（読み取り専用）。 */
+export function compareArchiveEntry(
+  left: string,
+  right: string,
+  rel: string,
+  mode: DiffMode,
+  options: DiffOptions,
+  encodings: EncodingChoice = AUTO_ENCODING,
+): Promise<Comparison> {
+  return invoke<Comparison>("compare_archive_entry", { left, right, rel, mode, options, encodings }).then((c) => {
+    if (c?.kind === "text") expandRows(c.rows);
+    return c;
+  });
+}

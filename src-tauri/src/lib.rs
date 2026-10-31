@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod binary;
 pub mod commands;
 pub mod compare;
@@ -62,6 +63,7 @@ pub fn run() {
             commands::write_patch,
             commands::write_report,
             commands::check_regex,
+            commands::compare_archive_entry,
             commands::initial_paths,
             commands::merge3,
             commands::create_text

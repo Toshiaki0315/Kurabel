@@ -10,6 +10,8 @@ describe("settings", () => {
   it("round-trips saved settings", () => {
     const s = {
       mode: "word" as const,
+      showWhitespace: true,
+      syntax: false,
       options: { ...DEFAULT_SETTINGS.options, ignore_whitespace: true, ignore_case: true, exclude: [".git", "*.obj"], recursive: false, quick: true, ignore_comments: true, comment_prefixes: ["--"], detect_moves: false },
     };
     saveSettings(s);

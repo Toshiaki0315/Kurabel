@@ -68,6 +68,8 @@ interface DirCompareProps {
   entries: DirEntry[];
   onOpen: (relPath: string) => void;
   single?: boolean;
+  /** zip などのアーカイブの中身（読み取り専用: コピー・削除はできない） */
+  archive?: boolean;
   /** 選択した項目を反対側へコピー（overwrite: コピー先に同名の項目がある） */
   onCopy?: (relPath: string, from: "left" | "right", overwrite: boolean) => void;
   onDelete?: (relPath: string, side: "left" | "right") => void;
@@ -115,7 +117,7 @@ export function DirCompare(props: DirCompareProps) {
         <input type="search" aria-label="名前で絞り込み" placeholder="名前で絞り込み" value={query} onChange={(e) => setQuery(e.target.value)} />
         <button onClick={() => setCollapsed(new Set())}>すべて開く</button>
         <button onClick={() => setCollapsed(new Set(collapsibleDirs(tree)))}>すべて閉じる</button>
-        {!props.single && (
+        {!props.single && !props.archive && (
           <>
             <button disabled={!sel?.left} onClick={() => sel && props.onCopy?.(sel.path, "left", sel.right !== null)}>
               → 右へコピー
@@ -129,10 +131,10 @@ export function DirCompare(props: DirCompareProps) {
             <button disabled={!sel?.right} onClick={() => sel && props.onDelete?.(sel.path, "right")}>
               右を削除
             </button>
-            <button onClick={() => void exportReport()}>レポートを保存…</button>
-            {report && (report.error ? <span role="alert" className="error">{report.message}</span> : <span className="summary">{report.message}</span>)}
           </>
         )}
+        {!props.single && <button onClick={() => void exportReport()}>レポートを保存…</button>}
+        {report && (report.error ? <span role="alert" className="error">{report.message}</span> : <span className="summary">{report.message}</span>)}
         {!props.single && <span className="summary">{props.entries.filter((e) => e.status !== "same").length} 件の差分</span>}
       </ToolbarPortal>
       <div role="tree" className="dir-tree">
