@@ -53,10 +53,33 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 存在しない末尾部分があっても、実在する祖先を正規化して絶対パスを返す。
+fn canonical_lenient(path: &Path) -> PathBuf {
+    let mut tail = Vec::new();
+    let mut cur = path;
+    loop {
+        if let Ok(c) = fs::canonicalize(cur) {
+            return tail.iter().rev().fold(c, |acc, name| acc.join(name));
+        }
+        match (cur.file_name(), cur.parent()) {
+            (Some(name), Some(parent)) => {
+                tail.push(name.to_owned());
+                cur = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
 /// `src_root/rel` を `dst_root/rel` へコピーする（既存のファイルは上書き）。
+/// コピー元とコピー先が同一、またはコピー先がコピー元の内側になる場合は拒否する。
 pub fn copy_entry(src_root: &Path, dst_root: &Path, rel: &str) -> Result<(), String> {
     let src = resolve_under(src_root, rel)?;
     let dst = resolve_under(dst_root, rel)?;
+    let (src_real, dst_real) = (canonical_lenient(&src), canonical_lenient(&dst));
+    if dst_real.starts_with(&src_real) {
+        return Err(format!("{rel}: コピー元とコピー先が同じ（または入れ子の）場所です"));
+    }
     let src_meta = fs::symlink_metadata(&src).map_err(|e| format!("{}: {e}", src.display()))?;
     let dst_meta = fs::symlink_metadata(&dst).ok();
     if src_meta.is_dir() {
@@ -202,6 +225,32 @@ mod tests {
         assert!(copy_entry(src.path(), dst.path(), "a.txt").unwrap_err().contains("同名のフォルダ"));
         assert!(copy_entry(src.path(), dst.path(), "nope").is_err());
         assert!(copy_entry(src.path(), dst.path(), "../a.txt").is_err());
+    }
+
+    #[test]
+    fn refuses_self_and_nested_copies_without_touching_data() {
+        let d = tree();
+        // 同じフォルダ同士: ファイルもフォルダも内容が保たれる
+        assert!(copy_entry(d.path(), d.path(), "a.txt").unwrap_err().contains("同じ"));
+        assert!(copy_entry(d.path(), d.path(), "sub").is_err());
+        assert_eq!(fs::read_to_string(d.path().join("a.txt")).unwrap(), "A");
+        assert_eq!(fs::read_to_string(d.path().join("sub/b.txt")).unwrap(), "B");
+        // コピー先がコピー元の内側（存在しないパスを含む）
+        let inner = d.path().join("sub/inner");
+        assert!(copy_entry(d.path(), &inner, "sub").is_err());
+        assert!(!inner.join("sub").exists());
+        // 相対表記の違う同一フォルダ
+        let alias = d.path().join("sub/..");
+        assert!(copy_entry(d.path(), &alias, "a.txt").is_err());
+        assert_eq!(fs::read_to_string(d.path().join("a.txt")).unwrap(), "A");
+    }
+
+    #[test]
+    fn canonical_lenient_handles_missing_tails() {
+        let d = tempfile::tempdir().unwrap();
+        let real = fs::canonicalize(d.path()).unwrap();
+        assert_eq!(canonical_lenient(&d.path().join("x/y/z")), real.join("x/y/z"));
+        assert_eq!(canonical_lenient(Path::new("")), PathBuf::new());
     }
 
     #[test]

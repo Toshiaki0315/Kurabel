@@ -137,6 +137,20 @@ describe("ThreeWay", () => {
       expect(onDirtyChange).toHaveBeenLastCalledWith(false);
     });
 
+    it("restores CRLF line endings when the merge reference uses CRLF", async () => {
+      saveText.mockResolvedValue(undefined);
+      render(<ThreeWay data={{ ...data, eol: "\r\n" }} basePath="/x/base.txt" leftPath="/x/left.txt" rightPath="/x/right.txt" onClose={vi.fn()} />);
+      fireEvent.click(screen.getByRole("button", { name: "競合1: 左を採用" }));
+      fireEvent.click(screen.getByRole("button", { name: "競合2: 右を採用" }));
+      confirmAction.mockResolvedValue(true);
+      fireEvent.click(screen.getByText("右へ保存"));
+      await waitFor(() => expect(saveText).toHaveBeenCalled());
+      const saved = saveText.mock.calls[0][1] as string;
+      expect(saved).toContain("\r\n");
+      expect(saved.replace(/\r\n/g, "")).not.toContain("\n");
+      expect((screen.getByLabelText("マージ結果") as HTMLTextAreaElement).value).not.toContain("\r");
+    });
+
     it("overwrites the right file", async () => {
       saveText.mockResolvedValue(undefined);
       setup();

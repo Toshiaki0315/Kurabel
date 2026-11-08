@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { normalizeEol, withEol } from "../lib/eol";
 import { confirmAction, createText, pickSavePath, saveText } from "../api";
 import { buildResult, conflictIndexes, RESOLUTIONS, unresolvedCount, type Resolution, type Resolutions } from "../lib/merge3";
 import { baseName } from "../lib/recent";
@@ -58,7 +59,8 @@ export function ThreeWay({ data, basePath, leftPath, rightPath, onDirtyChange, o
   const conflicts = useMemo(() => conflictIndexes(chunks), [chunks]);
   const unresolved = unresolvedCount(chunks, resolutions);
   const auto = useMemo(() => buildResult(chunks, resolutions, data.eol, data.trailing_newline), [chunks, resolutions, data]);
-  const result = manual ?? auto;
+  // textarea は改行を LF に正規化するので、表示は LF、保存時に元の改行へ戻す
+  const result = normalizeEol(manual ?? auto);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -109,7 +111,7 @@ export function ThreeWay({ data, basePath, leftPath, rightPath, onDirtyChange, o
     if (!(await confirmUnresolved())) return;
     if (!(await confirmAction(`「${path}」を、マージ結果で上書きします。`, "上書き"))) return;
     try {
-      await saveText(path, result, encoding);
+      await saveText(path, withEol(result, data.eol), encoding);
       saved(`${side === "left" ? "左" : "右"}のファイルに保存しました`);
     } catch (e) {
       setError(String(e));
@@ -119,7 +121,7 @@ export function ThreeWay({ data, basePath, leftPath, rightPath, onDirtyChange, o
     try {
       const path = await pickSavePath(baseName(leftPath));
       if (!path || !(await confirmUnresolved())) return;
-      await createText(path, result, data.left_encoding);
+      await createText(path, withEol(result, data.eol), data.left_encoding);
       saved(`保存しました: ${path}`);
     } catch (e) {
       setError(String(e));

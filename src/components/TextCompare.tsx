@@ -5,6 +5,7 @@ import { baseName } from "../lib/recent";
 import { buildTextReport, nowLabel } from "../lib/report";
 import { languageFor, SYNTAX_MAX_LINES, tokenizeLines, type Token } from "../lib/syntax";
 import { saveReport } from "../lib/saveReport";
+import { eolOf, normalizeEol, withEol } from "../lib/eol";
 import { applyBlock, blockLines, correspondingLine, findBlocks, type Side } from "../lib/merge";
 import type { Cell, DiffMode, DiffOptions, DiffRow, TextEncoding } from "../types";
 import { CellText } from "./Segments";
@@ -52,10 +53,11 @@ interface Props {
 }
 
 export function TextCompare(props: Props) {
-  const [leftText, setLeftText] = useState(props.leftText);
-  const [rightText, setRightText] = useState(props.rightText);
-  const [savedLeft, setSavedLeft] = useState(props.leftText);
-  const [savedRight, setSavedRight] = useState(props.rightText);
+  const eols = useRef({ left: eolOf(props.leftText), right: eolOf(props.rightText) });
+  const [leftText, setLeftText] = useState(() => normalizeEol(props.leftText));
+  const [rightText, setRightText] = useState(() => normalizeEol(props.rightText));
+  const [savedLeft, setSavedLeft] = useState(() => normalizeEol(props.leftText));
+  const [savedRight, setSavedRight] = useState(() => normalizeEol(props.rightText));
   const [rows, setRows] = useState(props.rows);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +74,7 @@ export function TextCompare(props: Props) {
   const [activeSide, setActiveSide] = useState<Side>("left");
   const [notice, setNotice] = useState<string | null>(null);
   const applied = useRef({ mode: props.mode, options: props.options });
-  const diffed = useRef({ left: props.leftText, right: props.rightText });
+  const diffed = useRef({ left: normalizeEol(props.leftText), right: normalizeEol(props.rightText) });
   const seq = useRef(0);
   const root = useRef<HTMLElement>(null);
   const table = useRef<HTMLTableElement>(null);
@@ -171,7 +173,7 @@ export function TextCompare(props: Props) {
       side === "left" ? [props.leftPath, leftText, props.leftEncoding] : [props.rightPath, rightText, props.rightEncoding];
     if (path === null) return;
     try {
-      await saveText(path, text, encoding);
+      await saveText(path, withEol(text, eols.current[side]), encoding);
       (side === "left" ? setSavedLeft : setSavedRight)(text);
       setError(null);
       await rediff(leftText, rightText, props.mode);

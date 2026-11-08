@@ -105,6 +105,20 @@ describe("TextCompare", () => {
     expect(await screen.findByRole("alert", undefined, { timeout: 2000 })).toHaveTextContent("boom");
   });
 
+  it("keeps CRLF line endings when saving an edited file (the editor normalizes to LF)", async () => {
+    saveText.mockResolvedValue(undefined);
+    diffText.mockResolvedValue([]);
+    render(<TextCompare leftText={"a\r\nb\r\n"} rightText={"a\nb\n"} rows={[]} mode="line" leftPath="/l.txt" rightPath="/r.txt" options={OPTS} leftEncoding={UTF8} rightEncoding={UTF8} />);
+    fireEvent.click(screen.getByText("編集"));
+    expect((screen.getByLabelText("左のテキスト") as HTMLTextAreaElement).value).toBe("a\nb\n");
+    fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "a\nX\n" } });
+    fireEvent.change(screen.getByLabelText("右のテキスト"), { target: { value: "a\nY\n" } });
+    fireEvent.click(screen.getByRole("button", { name: "左を保存" }));
+    await waitFor(() => expect(saveText).toHaveBeenCalledWith("/l.txt", "a\r\nX\r\n", UTF8));
+    fireEvent.click(screen.getByRole("button", { name: "右を保存" }));
+    await waitFor(() => expect(saveText).toHaveBeenCalledWith("/r.txt", "a\nY\n", UTF8));
+  });
+
   it("saves only the edited pane and clears the dirty marker", async () => {
     saveText.mockResolvedValue(undefined);
     diffText.mockResolvedValue([]);
