@@ -9,11 +9,13 @@ pub mod textcodec;
 pub mod textdiff;
 
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
-use tauri::{AppHandle, Emitter, Wry};
+use tauri::{AppHandle, Emitter, Manager, Wry};
 
 /// 日本語のメニューバー。テキスト編集のショートカット (Cmd/Ctrl+Z, X, C, V, A) は「編集」メニュー経由で有効になる。
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let settings = MenuItemBuilder::with_id("settings", "設定…").accelerator("CmdOrCtrl+,").build(app)?;
+    // 標準の「終了」はウインドウを閉じる処理を通らず、未保存の確認が出ない。メインウインドウを閉じる形にして確認を通す
+    let quit = MenuItemBuilder::with_id("quit", "クラベルを終了").accelerator("CmdOrCtrl+Q").build(app)?;
     let app_menu = SubmenuBuilder::new(app, "クラベル")
         .item(&PredefinedMenuItem::about(app, Some("クラベルについて"), None)?)
         .separator()
@@ -23,7 +25,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .item(&PredefinedMenuItem::hide_others(app, Some("ほかを隠す"))?)
         .item(&PredefinedMenuItem::show_all(app, Some("すべてを表示"))?)
         .separator()
-        .item(&PredefinedMenuItem::quit(app, Some("クラベルを終了"))?)
+        .item(&quit)
         .build()?;
     let edit = SubmenuBuilder::new(app, "編集")
         .item(&PredefinedMenuItem::undo(app, Some("元に戻す"))?)
@@ -48,8 +50,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .menu(build_menu)
         .on_menu_event(|app, event| {
-            if event.id() == "settings" {
-                let _ = app.emit("open-settings", ());
+            match event.id().as_ref() {
+                "settings" => {
+                    let _ = app.emit("open-settings", ());
+                }
+                "quit" => match app.get_webview_window("main") {
+                    Some(window) => {
+                        let _ = window.close();
+                    }
+                    None => app.exit(0),
+                },
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![

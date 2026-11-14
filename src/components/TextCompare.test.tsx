@@ -458,6 +458,15 @@ describe("TextCompare", () => {
   });
 
   describe("patch export", () => {
+    it("builds the patch with each file's original line endings (CRLF files stay CRLF)", async () => {
+      makePatch.mockResolvedValue("--- a\n+++ b\n");
+      pickPatchPath.mockResolvedValue("/out/x.patch");
+      writePatch.mockResolvedValue(undefined);
+      render(<TextCompare leftText={"a\r\nb\r\n"} rightText={"a\nc\n"} rows={rows} mode="line" leftPath="/l.txt" rightPath="/r.txt" options={OPTS} leftEncoding={UTF8} rightEncoding={UTF8} />);
+      fireEvent.click(screen.getByText("パッチを保存…"));
+      await waitFor(() => expect(makePatch).toHaveBeenCalledWith("a\r\nb\r\n", "a\nc\n", "/l.txt", "/r.txt"));
+    });
+
     it("builds a patch from the current texts and saves it where the user chooses", async () => {
       makePatch.mockResolvedValue("--- a\n+++ b\n");
       pickPatchPath.mockResolvedValue("/out/x.patch");

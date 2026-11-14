@@ -5,7 +5,7 @@ use crate::fileops;
 use crate::textcodec::{EncodingChoice, TextEncoding};
 use crate::textdiff::{self, DiffMode, DiffOptions, DiffRow};
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn compare_paths(
     left: Option<String>,
     right: Option<String>,
@@ -21,22 +21,22 @@ pub fn compare_paths(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn copy_entry(src_root: String, dst_root: String, rel: String) -> Result<(), String> {
     fileops::copy_entry(src_root.as_ref(), dst_root.as_ref(), &rel)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_entry(root: String, rel: String) -> Result<(), String> {
     fileops::delete_entry(root.as_ref(), &rel)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn make_patch(left_text: String, right_text: String, left_label: String, right_label: String) -> String {
     textdiff::unified_patch(&left_text, &right_text, &left_label, &right_label)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_report(path: String, content: String) -> Result<(), String> {
     fileops::write_report(path.as_ref(), &content)
 }
@@ -47,7 +47,7 @@ pub fn check_regex(pattern: String) -> Result<(), String> {
     textdiff::compile_pattern(&pattern).map(|_| ())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_patch(path: String, content: String) -> Result<(), String> {
     fileops::write_patch(path.as_ref(), &content)
 }
@@ -59,18 +59,18 @@ pub fn initial_paths() -> Vec<String> {
     fileops::parse_paths(std::env::args(), &cwd)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn merge3(base: String, left: String, right: String) -> Result<compare::Merge3, String> {
     compare::merge3_files(base.as_ref(), left.as_ref(), right.as_ref())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_text(path: String, content: String, encoding: TextEncoding) -> Result<(), String> {
     compare::create_text(path.as_ref(), &content, &encoding)
 }
 
 /// アーカイブ（zip など）内の同名ファイル同士を比較する。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn compare_archive_entry(
     left: String,
     right: String,
@@ -87,12 +87,12 @@ pub fn path_kind(path: String) -> Result<PathKind, String> {
     compare::classify(path.as_ref())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_text(path: String, content: String, encoding: TextEncoding) -> Result<(), String> {
     compare::write_text(path.as_ref(), &content, &encoding)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn diff_text(left: String, right: String, mode: DiffMode, options: DiffOptions) -> Vec<DiffRow> {
     textdiff::diff_text(&left, &right, mode, &options)
 }

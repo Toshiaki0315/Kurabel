@@ -258,7 +258,7 @@ export function TextCompare(props: Props) {
   const exportPatch = async () => {
     if (props.leftPath === null || props.rightPath === null) return;
     try {
-      const patch = await makePatch(leftText, rightText, props.leftPath, props.rightPath);
+      const patch = await makePatch(withEol(leftText, eols.current.left), withEol(rightText, eols.current.right), props.leftPath, props.rightPath);
       if (patch === "") {
         setNotice("差分がないため、パッチは作成しませんでした");
       } else {
