@@ -31,6 +31,9 @@ pub enum Comparison {
         /// 改行コード: "LF" / "CRLF" / "CR" / "混在" / "なし"
         left_eol: String,
         right_eol: String,
+        /// 読み込み時点の更新日時（UNIX ミリ秒）。保存時に、他のツールによる変更を検出するのに使う
+        left_mtime: Option<u64>,
+        right_mtime: Option<u64>,
         rows: Vec<DiffRow>,
     },
     Binary {
@@ -107,8 +110,23 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// ファイルの更新日時（UNIX ミリ秒）。取得できなければ None。
+pub fn mtime_ms(path: &Path) -> Option<u64> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    u64::try_from(modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis()).ok()
+}
+
+/// 読み込んだ後に他のツールがファイルを変更していたときのエラー（先頭の識別子で画面側が判別する）。
+pub const MODIFIED_ON_DISK: &str = "MODIFIED_ON_DISK";
+
 /// 既存の通常ファイルへテキストを書き込む（新規作成・ディレクトリ・サイズ超過は拒否）。
 pub fn write_text(path: &Path, content: &str, encoding: &TextEncoding) -> Result<(), String> {
+    write_text_checked(path, content, encoding, None).map(|_| ())
+}
+
+/// `expected`（読み込み時の更新日時）が指定され、現在の更新日時と違えば書き込まずにエラーにする。
+/// 成功したら、書き込み後の更新日時を返す。
+pub fn write_text_checked(path: &Path, content: &str, encoding: &TextEncoding, expected: Option<u64>) -> Result<Option<u64>, String> {
     if classify(path)? != PathKind::File {
         return Err(format!("{}: ファイルではありません", path.display()));
     }
@@ -116,7 +134,13 @@ pub fn write_text(path: &Path, content: &str, encoding: &TextEncoding) -> Result
     if bytes.len() as u64 > MAX_FILE_SIZE {
         return Err(format!("内容が上限 ({} MB) を超えています", MAX_FILE_SIZE / 1024 / 1024));
     }
-    write_atomic(path, &bytes)
+    if let Some(expected) = expected {
+        if mtime_ms(path) != Some(expected) {
+            return Err(format!("{MODIFIED_ON_DISK}: {} は、読み込んだ後に変更されています", path.display()));
+        }
+    }
+    write_atomic(path, &bytes)?;
+    Ok(mtime_ms(path))
 }
 
 /// 片方だけ開いているとき: そのファイル/フォルダをそのまま表示するための結果を返す（反対側は空）。
@@ -141,8 +165,8 @@ pub fn view_single(path: &Path, left_side: bool, options: &DiffOptions, encoding
         });
     };
     let rows = textdiff::plain_rows(&decoded.text, left_side);
-    let mine = (decoded.text.clone(), decoded.encoding, detect_eol(&decoded.text));
-    let blank = (String::new(), TextEncoding { name: "UTF-8".into(), bom: false }, "なし".to_string());
+    let mine = (decoded.text.clone(), decoded.encoding, detect_eol(&decoded.text), mtime_ms(path));
+    let blank = (String::new(), TextEncoding { name: "UTF-8".into(), bom: false }, "なし".to_string(), None);
     let (l, r) = if left_side { (mine, blank) } else { (blank, mine) };
     Ok(Comparison::Text {
         left_text: l.0,
@@ -151,6 +175,8 @@ pub fn view_single(path: &Path, left_side: bool, options: &DiffOptions, encoding
         right_encoding: r.1,
         left_eol: l.2,
         right_eol: r.2,
+        left_mtime: l.3,
+        right_mtime: r.3,
         rows,
     })
 }
@@ -240,7 +266,7 @@ pub fn compare_paths(
 }
 
 fn compare_files(left: &Path, right: &Path, mode: DiffMode, options: &DiffOptions, encodings: &EncodingChoice) -> Result<Comparison, String> {
-    compare_bytes(read_limited(left)?, read_limited(right)?, mode, options, encodings)
+    compare_bytes(read_limited(left)?, read_limited(right)?, (mtime_ms(left), mtime_ms(right)), mode, options, encodings)
 }
 
 /// アーカイブ内の同名ファイル同士を比較する（ファイルの比較と同じ結果を返す）。
@@ -252,10 +278,10 @@ pub fn compare_archive_entry(
     options: &DiffOptions,
     encodings: &EncodingChoice,
 ) -> Result<Comparison, String> {
-    compare_bytes(archive::read_entry(left, rel)?, archive::read_entry(right, rel)?, mode, options, encodings)
+    compare_bytes(archive::read_entry(left, rel)?, archive::read_entry(right, rel)?, (None, None), mode, options, encodings)
 }
 
-fn compare_bytes(l: Vec<u8>, r: Vec<u8>, mode: DiffMode, options: &DiffOptions, encodings: &EncodingChoice) -> Result<Comparison, String> {
+fn compare_bytes(l: Vec<u8>, r: Vec<u8>, mtimes: (Option<u64>, Option<u64>), mode: DiffMode, options: &DiffOptions, encodings: &EncodingChoice) -> Result<Comparison, String> {
     if let (Some(ld), Some(rd)) = (decode_side(&l, encodings.left.as_deref())?, decode_side(&r, encodings.right.as_deref())?) {
         let rows = textdiff::diff_text(&ld.text, &rd.text, mode, options);
         let (left_eol, right_eol) = (detect_eol(&ld.text), detect_eol(&rd.text));
@@ -266,6 +292,8 @@ fn compare_bytes(l: Vec<u8>, r: Vec<u8>, mode: DiffMode, options: &DiffOptions, 
             right_encoding: rd.encoding,
             left_eol,
             right_eol,
+            left_mtime: mtimes.0,
+            right_mtime: mtimes.1,
             rows,
         });
     }
@@ -410,6 +438,43 @@ mod tests {
         assert_eq!(fs::read_to_string(&f).unwrap(), "new");
         let names: Vec<String> = fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert!(names.iter().all(|n| !n.contains("kurabel-tmp")), "{names:?}");
+    }
+
+    #[test]
+    fn refuses_to_overwrite_a_file_changed_after_it_was_read() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("a.txt");
+        fs::write(&f, "v1").unwrap();
+        let read_at = mtime_ms(&f).unwrap();
+        // 読み込み時と同じ日時なら保存でき、新しい更新日時が返る
+        assert!(write_text_checked(&f, "v2", &utf8(), Some(read_at)).unwrap().is_some());
+        // 他のツールが（日時を変えて）書き換えた
+        let other = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        fs::File::options().write(true).open(&f).unwrap().set_modified(other).unwrap();
+        let err = write_text_checked(&f, "v3", &utf8(), Some(read_at)).unwrap_err();
+        assert!(err.starts_with(MODIFIED_ON_DISK), "{err}");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "v2");
+        // 日時を指定しなければ（上書きを確認した後）保存できる
+        write_text_checked(&f, "v3", &utf8(), None).unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "v3");
+        assert_eq!(mtime_ms(&d.path().join("missing")), None);
+    }
+
+    #[test]
+    fn comparisons_report_the_modification_times_of_text_files() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (d.path().join("a.txt"), d.path().join("b.txt"));
+        fs::write(&a, "x\n").unwrap();
+        fs::write(&b, "y\n").unwrap();
+        let (o, e) = (DiffOptions::default(), EncodingChoice::default());
+        match compare_paths(&a, &b, DiffMode::Line, &o, &e).unwrap() {
+            Comparison::Text { left_mtime, right_mtime, .. } => assert_eq!((left_mtime, right_mtime), (mtime_ms(&a), mtime_ms(&b))),
+            _ => panic!("expected text"),
+        }
+        match view_single(&b, false, &o, None).unwrap() {
+            Comparison::Text { left_mtime, right_mtime, .. } => assert_eq!((left_mtime, right_mtime), (None, mtime_ms(&b))),
+            _ => panic!("expected text"),
+        }
     }
 
     #[test]

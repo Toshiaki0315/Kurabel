@@ -190,14 +190,55 @@ pub fn quick_equal(a: &Path, b: &Path) -> io::Result<bool> {
     Ok(gap <= Duration::from_secs(2))
 }
 
-pub fn compare_dirs(left: &Path, right: &Path, options: &DiffOptions) -> Result<Vec<DirEntry>, String> {
-    let (lt, rt) = (collect(left, options)?, collect(right, options)?);
-    let mut keys: Vec<&String> = lt.keys().chain(rt.keys()).collect();
+type Node = (NodeKind, PathBuf);
+
+/// フォルダが、大文字小文字を区別しないファイルシステム上にあるかを、実際に調べて判定する
+/// （名前の大文字小文字を入れ替えたパスが同じように存在するか）。判断できなければ false。
+fn case_insensitive(root: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(root) else { return false };
+    for entry in entries.flatten().take(32) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let toggled: String = name
+            .chars()
+            .map(|c| if c.is_lowercase() { c.to_uppercase().next().unwrap_or(c) } else { c.to_lowercase().next().unwrap_or(c) })
+            .collect();
+        if toggled != name {
+            return std::fs::symlink_metadata(root.join(&toggled)).is_ok();
+        }
+    }
+    false
+}
+
+/// 左右のツリーを、同じ項目どうしで組にする。`fold` のときは大文字小文字を区別せずに対応づける
+/// （表示するパスは、左にあれば左の綴り、なければ右の綴り。親フォルダの綴りもそろえる）。
+fn pair_up<'a>(lt: &'a Tree, rt: &'a Tree, fold: bool) -> Vec<(String, Option<&'a Node>, Option<&'a Node>)> {
+    let norm = |k: &str| if fold { k.to_lowercase() } else { k.to_string() };
+    let index = |t: &'a Tree| -> BTreeMap<String, (&'a String, &'a Node)> { t.iter().map(|(k, v)| (norm(k), (k, v))).collect() };
+    let (lm, rm) = (index(lt), index(rt));
+    let mut keys: Vec<&String> = lm.keys().chain(rm.keys()).collect();
     keys.sort();
     keys.dedup();
-    let mut entries = Vec::with_capacity(keys.len());
+    let mut shown: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let mut out = Vec::with_capacity(keys.len());
     for key in keys {
-        let (l, r) = (lt.get(key), rt.get(key));
+        let (l, r) = (lm.get(key), rm.get(key));
+        let original = l.or(r).map(|(k, _)| k.as_str()).unwrap_or_default();
+        let name = original.rsplit('/').next().unwrap_or(original);
+        let display = match key.rsplit_once('/').and_then(|(parent, _)| shown.get(parent)) {
+            Some(parent) => format!("{parent}/{name}"),
+            None => original.to_string(),
+        };
+        shown.insert(key.as_str(), display.clone());
+        out.push((display, l.map(|(_, n)| *n), r.map(|(_, n)| *n)));
+    }
+    out
+}
+
+pub fn compare_dirs(left: &Path, right: &Path, options: &DiffOptions) -> Result<Vec<DirEntry>, String> {
+    let (lt, rt) = (collect(left, options)?, collect(right, options)?);
+    let fold = case_insensitive(left) && case_insensitive(right);
+    let mut entries = Vec::new();
+    for (key, l, r) in pair_up(&lt, &rt, fold) {
         let status = match (l, r) {
             (Some(_), None) => DirStatus::Removed,
             (None, Some(_)) => DirStatus::Added,
@@ -214,7 +255,7 @@ pub fn compare_dirs(left: &Path, right: &Path, options: &DiffOptions) -> Result<
         };
         let ((left_size, left_modified), (right_size, right_modified)) = (file_meta(l), file_meta(r));
         entries.push(DirEntry {
-            path: key.clone(),
+            path: key,
             left: l.map(|v| v.0),
             right: r.map(|v| v.0),
             status,
@@ -320,6 +361,41 @@ mod tests {
         fs::set_permissions(l.path().join("f"), fs::Permissions::from_mode(0o644)).unwrap();
         // root では読めてしまうため、エラーまたは Same のどちらかを許容
         assert!(res.is_err() || res.unwrap()[0].status == DirStatus::Same);
+    }
+
+    fn node(kind: NodeKind) -> Node {
+        (kind, PathBuf::from("/x"))
+    }
+
+    #[test]
+    fn pairs_names_ignoring_case_only_when_asked_and_aligns_parent_spelling() {
+        let mut lt = Tree::new();
+        lt.insert("Docs".into(), node(NodeKind::Directory));
+        lt.insert("Docs/A.txt".into(), node(NodeKind::File));
+        let mut rt = Tree::new();
+        rt.insert("docs".into(), node(NodeKind::Directory));
+        rt.insert("docs/a.TXT".into(), node(NodeKind::File));
+        rt.insert("docs/new.txt".into(), node(NodeKind::File));
+        let folded = pair_up(&lt, &rt, true);
+        let names: Vec<&str> = folded.iter().map(|(k, _, _)| k.as_str()).collect();
+        assert_eq!(names, vec!["Docs", "Docs/A.txt", "Docs/new.txt"]); // 左の綴りを使い、右だけの項目も親の綴りにそろう
+        assert!(folded[1].1.is_some() && folded[1].2.is_some());
+        assert!(folded[2].1.is_none() && folded[2].2.is_some());
+        let strict = pair_up(&lt, &rt, false);
+        assert_eq!(strict.len(), 5); // 区別するなら、すべて別の項目
+    }
+
+    #[test]
+    fn detects_a_case_insensitive_folder_by_probing_the_filesystem() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(!case_insensitive(&d.path().join("missing")));
+        assert!(!case_insensitive(d.path())); // 空: 判断できない
+        fs::write(d.path().join("123"), "x").unwrap();
+        assert!(!case_insensitive(d.path())); // 大文字小文字のない名前だけ: 判断できない
+        fs::write(d.path().join("Probe.txt"), "x").unwrap();
+        // 実際のファイルシステムの性質に従う（macOS・Windows は true、Linux は通常 false）
+        let expected = d.path().join("pROBE.TXT").exists();
+        assert_eq!(case_insensitive(d.path()), expected);
     }
 
     #[cfg(unix)]

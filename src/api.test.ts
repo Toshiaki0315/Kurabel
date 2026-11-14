@@ -59,7 +59,9 @@ describe("api", () => {
     invoke.mockResolvedValue(undefined);
     const encoding = { name: "Shift_JIS", bom: false };
     await saveText("/x", "body", encoding);
-    expect(invoke).toHaveBeenCalledWith("save_text", { path: "/x", content: "body", encoding });
+    expect(invoke).toHaveBeenCalledWith("save_text", { path: "/x", content: "body", encoding, expectedMtime: null });
+    await saveText("/x", "body", encoding, 123);
+    expect(invoke).toHaveBeenLastCalledWith("save_text", { path: "/x", content: "body", encoding, expectedMtime: 123 });
   });
 
   it("returns the selected path, or null when cancelled", async () => {

@@ -31,9 +31,15 @@ export function diffText(left: string, right: string, mode: DiffMode, options: D
   return invoke<DiffRow[]>("diff_text", { left, right, mode, options }).then(expandRows);
 }
 
-/** 読み込み時の文字コード（BOM含む）のまま書き戻す。 */
-export function saveText(path: string, content: string, encoding: TextEncoding): Promise<void> {
-  return invoke("save_text", { path, content, encoding });
+/** ファイルが読み込み後に他のアプリで変更されたときに、バックエンドが返すエラーの識別子 */
+export const MODIFIED_ON_DISK = "MODIFIED_ON_DISK";
+
+/**
+ * 読み込み時の文字コード（BOM含む）のまま書き戻す。expectedMtime（読み込み時の更新日時）を渡すと、
+ * その後に変更されたファイルは書き込まずに MODIFIED_ON_DISK のエラーにする。書き込み後の更新日時を返す。
+ */
+export function saveText(path: string, content: string, encoding: TextEncoding, expectedMtime?: number | null): Promise<number | null> {
+  return invoke<number | null>("save_text", { path, content, encoding, expectedMtime: expectedMtime ?? null });
 }
 
 export function pathKind(path: string): Promise<"file" | "directory"> {

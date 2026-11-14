@@ -63,7 +63,7 @@ function Result(props: ResultProps) {
   const { result } = props;
   switch (result.kind) {
     case "text":
-      return <TextCompare leftText={result.left_text} rightText={result.right_text} rows={result.rows} mode={props.mode} options={props.options} onDirtyChange={props.onDirtyChange} leftPath={props.leftPath} rightPath={props.rightPath} leftEncoding={result.left_encoding} rightEncoding={result.right_encoding} onThreeWay={props.onThreeWay} readOnly={props.readOnly} languagePath={props.languagePath} showWhitespace={props.showWhitespace} syntax={props.syntax} />;
+      return <TextCompare leftText={result.left_text} rightText={result.right_text} rows={result.rows} mode={props.mode} options={props.options} onDirtyChange={props.onDirtyChange} leftPath={props.leftPath} rightPath={props.rightPath} leftEncoding={result.left_encoding} rightEncoding={result.right_encoding} leftMtime={result.left_mtime} rightMtime={result.right_mtime} onThreeWay={props.onThreeWay} readOnly={props.readOnly} languagePath={props.languagePath} showWhitespace={props.showWhitespace} syntax={props.syntax} />;
     case "binary":
       return <BinaryCompare rows={result.rows} truncated={result.truncated} />;
     case "directory":

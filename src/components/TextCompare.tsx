@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { diffText, makePatch, pickPatchPath, saveText, writePatch } from "../api";
+import { confirmAction, diffText, makePatch, MODIFIED_ON_DISK, pickPatchPath, saveText, writePatch } from "../api";
 import { findMatches, replaceAll, replaceMatch, type Match } from "../lib/find";
 import { baseName } from "../lib/recent";
 import { buildTextReport, nowLabel } from "../lib/report";
@@ -40,6 +40,9 @@ interface Props {
   rightPath: string | null;
   leftEncoding: TextEncoding;
   rightEncoding: TextEncoding;
+  /** 読み込み時のファイルの更新日時（UNIX ミリ秒）。保存時に、他のアプリによる変更を検出する */
+  leftMtime?: number | null;
+  rightMtime?: number | null;
   /** アーカイブ内のファイルなど、書き込めないもの。編集・保存・マージはできず、比較の確認だけができる */
   readOnly?: boolean;
   /** シンタックスハイライトの言語判定に使う名前（アーカイブ内のファイル名など）。省略時は左のパス */
@@ -54,6 +57,7 @@ interface Props {
 
 export function TextCompare(props: Props) {
   const eols = useRef({ left: eolOf(props.leftText), right: eolOf(props.rightText) });
+  const mtimes = useRef<Record<Side, number | null>>({ left: props.leftMtime ?? null, right: props.rightMtime ?? null });
   const [leftText, setLeftText] = useState(() => normalizeEol(props.leftText));
   const [rightText, setRightText] = useState(() => normalizeEol(props.rightText));
   const [savedLeft, setSavedLeft] = useState(() => normalizeEol(props.leftText));
@@ -175,8 +179,19 @@ export function TextCompare(props: Props) {
     const [path, text, encoding] =
       side === "left" ? [props.leftPath, leftText, props.leftEncoding] : [props.rightPath, rightText, props.rightEncoding];
     if (path === null) return;
+    const write = (force: boolean) => saveText(path, withEol(text, eols.current[side]), encoding, force ? null : mtimes.current[side]);
     try {
-      await saveText(path, withEol(text, eols.current[side]), encoding);
+      let saved: number | null;
+      try {
+        saved = await write(false);
+      } catch (e) {
+        if (!String(e).includes(MODIFIED_ON_DISK)) throw e;
+        // 読み込んだ後に他のアプリが変更している。黙って上書きせず、確認する
+        const ok = await confirmAction(`「${path}」は、読み込んだ後に他のアプリで変更されています。クラベルの内容で上書きしますか？`, "上書き");
+        if (!ok) return;
+        saved = await write(true);
+      }
+      mtimes.current[side] = saved ?? null;
       (side === "left" ? setSavedLeft : setSavedRight)(text);
       setError(null);
       await rediff(leftText, rightText, props.mode);

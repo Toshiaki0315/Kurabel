@@ -5,6 +5,7 @@ import type { DiffRow } from "../types";
 
 const diffText = vi.fn();
 const saveText = vi.fn();
+const confirmAction = vi.fn();
 const makePatch = vi.fn();
 const pickPatchPath = vi.fn();
 const writePatch = vi.fn();
@@ -16,6 +17,8 @@ vi.mock("../api", () => ({
   writePatch: (...a: unknown[]) => writePatch(...a),
   diffText: (...a: unknown[]) => diffText(...a),
   saveText: (...a: unknown[]) => saveText(...a),
+  confirmAction: (...a: unknown[]) => confirmAction(...a),
+  MODIFIED_ON_DISK: "MODIFIED_ON_DISK",
 }));
 
 import { DEFAULT_OPTIONS } from "../types";
@@ -49,6 +52,7 @@ describe("TextCompare", () => {
   beforeEach(() => {
     diffText.mockReset();
     saveText.mockReset();
+    confirmAction.mockReset();
     makePatch.mockReset();
     pickPatchPath.mockReset();
     writePatch.mockReset();
@@ -114,9 +118,9 @@ describe("TextCompare", () => {
     fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "a\nX\n" } });
     fireEvent.change(screen.getByLabelText("右のテキスト"), { target: { value: "a\nY\n" } });
     fireEvent.click(screen.getByRole("button", { name: "左を保存" }));
-    await waitFor(() => expect(saveText).toHaveBeenCalledWith("/l.txt", "a\r\nX\r\n", UTF8));
+    await waitFor(() => expect(saveText).toHaveBeenCalledWith("/l.txt", "a\r\nX\r\n", UTF8, null));
     fireEvent.click(screen.getByRole("button", { name: "右を保存" }));
-    await waitFor(() => expect(saveText).toHaveBeenCalledWith("/r.txt", "a\nY\n", UTF8));
+    await waitFor(() => expect(saveText).toHaveBeenCalledWith("/r.txt", "a\nY\n", UTF8, null));
   });
 
   it("disables the merge arrows while the diff does not match the text yet", async () => {
@@ -156,6 +160,52 @@ describe("TextCompare", () => {
     expect(screen.queryByText(note)).toBeNull();
   });
 
+  describe("saving a file changed by another app", () => {
+    const mkSaved = () =>
+      render(<TextCompare leftText="a" rightText="b" rows={[]} mode="line" leftPath="/l.txt" rightPath="/r.txt" options={OPTS} leftEncoding={UTF8} rightEncoding={UTF8} leftMtime={111} rightMtime={222} />);
+    const edit = () => {
+      fireEvent.click(screen.getByText("編集"));
+      fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "x" } });
+    };
+
+    it("passes the read-time modification time, and the new one after each save", async () => {
+      saveText.mockResolvedValueOnce(333).mockResolvedValueOnce(444);
+      diffText.mockResolvedValue([]);
+      mkSaved();
+      edit();
+      fireEvent.click(screen.getByRole("button", { name: "左を保存" }));
+      await waitFor(() => expect(saveText).toHaveBeenCalledWith("/l.txt", "x", UTF8, 111));
+      fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "y" } });
+      fireEvent.click(screen.getByRole("button", { name: "左を保存" }));
+      await waitFor(() => expect(saveText).toHaveBeenLastCalledWith("/l.txt", "y", UTF8, 333));
+    });
+
+    it("asks before overwriting, and then saves without the check", async () => {
+      saveText.mockRejectedValueOnce("MODIFIED_ON_DISK: /l.txt は、読み込んだ後に変更されています").mockResolvedValueOnce(555);
+      confirmAction.mockResolvedValue(true);
+      diffText.mockResolvedValue([]);
+      mkSaved();
+      edit();
+      fireEvent.click(screen.getByRole("button", { name: "左を保存" }));
+      await waitFor(() => expect(saveText).toHaveBeenCalledTimes(2));
+      expect(confirmAction).toHaveBeenCalledWith(expect.stringContaining("/l.txt"), "上書き");
+      expect(saveText).toHaveBeenLastCalledWith("/l.txt", "x", UTF8, null);
+      await waitFor(() => expect(screen.queryByText("未保存の変更あり")).toBeNull());
+    });
+
+    it("keeps the unsaved edit and the file untouched when the user declines", async () => {
+      saveText.mockRejectedValue("MODIFIED_ON_DISK: changed");
+      confirmAction.mockResolvedValue(false);
+      mkSaved();
+      edit();
+      fireEvent.click(screen.getByRole("button", { name: "左を保存" }));
+      await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+      expect(saveText).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("未保存の変更あり")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+  });
+
   it("saves only the edited pane and clears the dirty marker", async () => {
     saveText.mockResolvedValue(undefined);
     diffText.mockResolvedValue([]);
@@ -167,7 +217,7 @@ describe("TextCompare", () => {
     expect(screen.getByText("未保存の変更あり")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "左を保存" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "右を保存" }));
-    await waitFor(() => expect(saveText).toHaveBeenCalledWith("/r.txt", "edited", UTF8));
+    await waitFor(() => expect(saveText).toHaveBeenCalledWith("/r.txt", "edited", UTF8, null));
     await waitFor(() => expect(screen.queryByText("未保存の変更あり")).toBeNull());
     expect(diffText).toHaveBeenCalled();
   });
@@ -179,7 +229,7 @@ describe("TextCompare", () => {
     fireEvent.click(screen.getByText("編集"));
     fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "L" } });
     fireEvent.click(screen.getByRole("button", { name: "左を保存" }));
-    await waitFor(() => expect(saveText).toHaveBeenCalledWith("/l.txt", "L", SJIS));
+    await waitFor(() => expect(saveText).toHaveBeenCalledWith("/l.txt", "L", SJIS, null));
     await waitFor(() => expect(screen.queryByText("未保存の変更あり")).toBeNull());
     fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "L2" } });
     fireEvent.click(screen.getByRole("button", { name: "左を保存" }));
@@ -198,7 +248,7 @@ describe("TextCompare", () => {
     fireEvent.change(screen.getByLabelText("左のテキスト"), { target: { value: "L" } });
     fireEvent.keyDown(screen.getByLabelText("右のテキスト"), { key: "s", ctrlKey: true });
     await waitFor(() => expect(saveText).toHaveBeenCalledTimes(1));
-    expect(saveText).toHaveBeenCalledWith("/r.txt", "R", UTF8);
+    expect(saveText).toHaveBeenCalledWith("/r.txt", "R", UTF8, null);
   });
 
   it("keeps highlights in edit mode", () => {

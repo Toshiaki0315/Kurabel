@@ -88,8 +88,8 @@ pub fn path_kind(path: String) -> Result<PathKind, String> {
 }
 
 #[tauri::command(async)]
-pub fn save_text(path: String, content: String, encoding: TextEncoding) -> Result<(), String> {
-    compare::write_text(path.as_ref(), &content, &encoding)
+pub fn save_text(path: String, content: String, encoding: TextEncoding, expected_mtime: Option<u64>) -> Result<Option<u64>, String> {
+    compare::write_text_checked(path.as_ref(), &content, &encoding, expected_mtime)
 }
 
 #[tauri::command(async)]
@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn save_text_rejects_missing_file() {
         let enc = TextEncoding { name: "UTF-8".into(), bom: false };
-        assert!(save_text("/nonexistent/x".into(), "a".into(), enc).is_err());
+        assert!(save_text("/nonexistent/x".into(), "a".into(), enc, None).is_err());
     }
 
     #[test]

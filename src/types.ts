@@ -119,6 +119,9 @@ export type Comparison =
       right_encoding: TextEncoding;
       left_eol: string;
       right_eol: string;
+      /** 読み込み時の更新日時（UNIX ミリ秒）。保存時に他のアプリによる変更を検出する。アーカイブ内などは省略 */
+      left_mtime?: number | null;
+      right_mtime?: number | null;
       rows: DiffRow[];
     }
   | { kind: "binary"; left_size: number; right_size: number; truncated: boolean; rows: BinaryRow[] }
