@@ -117,7 +117,12 @@ fn collect(root: &Path, options: &DiffOptions) -> Result<Tree, String> {
                 )
         });
     for entry in walker {
-        let entry = entry.map_err(|e| e.to_string())?;
+        let entry = match entry {
+            Ok(e) => e,
+            // 読めないサブフォルダなどは飛ばす（1つの失敗で比較全体を止めない）。ルート自体が読めないときはエラー
+            Err(e) if e.depth() == 0 => return Err(e.to_string()),
+            Err(_) => continue,
+        };
         let file_type = entry.file_type();
         if file_type.is_symlink() {
             continue;
@@ -162,7 +167,12 @@ pub fn files_equal(a: &Path, b: &Path) -> io::Result<bool> {
         if n == 0 {
             return Ok(true);
         }
-        fb.read_exact(&mut bb[..n])?;
+        match fb.read_exact(&mut bb[..n]) {
+            Ok(()) => {}
+            // 比較の途中でもう一方が短くなった（サイズが変わった）ので、同一ではない
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(false),
+            Err(e) => return Err(e),
+        }
         if ba[..n] != bb[..n] {
             return Ok(false);
         }
@@ -310,6 +320,22 @@ mod tests {
         fs::set_permissions(l.path().join("f"), fs::Permissions::from_mode(0o644)).unwrap();
         // root では読めてしまうため、エラーまたは Same のどちらかを許容
         assert!(res.is_err() || res.unwrap()[0].status == DirStatus::Same);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_subfolder_does_not_stop_the_comparison() {
+        use std::os::unix::fs::PermissionsExt;
+        let (l, r) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        fs::write(l.path().join("ok.txt"), "x").unwrap();
+        fs::write(r.path().join("ok.txt"), "x").unwrap();
+        fs::create_dir(l.path().join("locked")).unwrap();
+        fs::write(l.path().join("locked/f"), "x").unwrap();
+        fs::set_permissions(l.path().join("locked"), fs::Permissions::from_mode(0o000)).unwrap();
+        let res = compare_dirs(l.path(), r.path(), &DiffOptions::default());
+        fs::set_permissions(l.path().join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+        let entries = res.unwrap();
+        assert!(entries.iter().any(|e| e.path == "ok.txt" && e.status == DirStatus::Same));
     }
 
     #[test]

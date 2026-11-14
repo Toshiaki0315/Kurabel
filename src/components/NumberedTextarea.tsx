@@ -41,6 +41,8 @@ interface Props {
   tokens?: Token[][];
   /** 空白・タブ・改行を記号で表示する */
   showWs?: boolean;
+  /** 画面に出ていない（表示モード中など）。Tab でフォーカスが入らないようにする */
+  hidden?: boolean;
   /** 検索中の一致箇所（行は1始まり、start は行内の文字位置） */
   findHit?: { line: number; start: number; length: number };
   /** 行番号(1始まり) → 差分ハイライト。本文と一致しない行（再比較前）は無視する。 */
@@ -49,7 +51,7 @@ interface Props {
 
 /** 行番号ガターと差分ハイライト層つきテキストエリア（折り返しなしで行とずれないようにする）。 */
 export const NumberedTextarea = forwardRef<EditorHandle, Props>(function NumberedTextarea(
-  { label, value, onChange, onSave, onScrollLine, highlights, findHit, onFocusPane, active, tokens, showWs },
+  { label, value, onChange, onSave, onScrollLine, highlights, findHit, onFocusPane, active, tokens, showWs, hidden },
   ref,
 ) {
   const gutter = useRef<HTMLDivElement>(null);
@@ -161,6 +163,7 @@ export const NumberedTextarea = forwardRef<EditorHandle, Props>(function Numbere
           aria-label={label}
           value={value}
           wrap="off"
+          tabIndex={hidden ? -1 : undefined}
           spellCheck={false}
           onFocus={onFocusPane}
           onChange={(e) => onChange(e.target.value)}

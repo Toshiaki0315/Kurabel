@@ -185,6 +185,18 @@ describe("App", () => {
     expect(await screen.findByLabelText("表示する差分")).toBeInTheDocument();
   });
 
+  it("re-reads the folder comparison when returning from a file (it may have been saved or merged)", async () => {
+    comparePaths.mockImplementation(dirThen(async () => textResult));
+    render(<App />);
+    await choose("左", "/L", true);
+    await choose("右", "/R", true);
+    fireEvent.click((await screen.findAllByText("f.txt"))[0]);
+    fireEvent.click(await screen.findByText("← ディレクトリ比較に戻る"));
+    await screen.findByLabelText("表示する差分");
+    const folderCalls = () => comparePaths.mock.calls.filter((c) => c[0] === "/L" && c[1] === "/R").length;
+    await waitFor(() => expect(folderCalls()).toBe(2)); // 開いた時 + 戻った時
+  });
+
   it("shows an error when opening a child file fails", async () => {
     comparePaths.mockImplementation(dirThen(() => Promise.reject("too big")));
     render(<App />);

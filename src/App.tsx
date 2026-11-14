@@ -278,7 +278,9 @@ export default function App() {
     if (pair && (await confirmLeave())) setSlots(pair);
   };
   const back = async () => {
-    if (await confirmLeave()) setChild(null);
+    if (!(await confirmLeave())) return;
+    setChild(null);
+    await refresh(); // 開いたファイルを保存・マージしていると一覧の状態が変わるので、読み直す
   };
 
   return (

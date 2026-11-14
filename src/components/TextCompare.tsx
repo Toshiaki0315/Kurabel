@@ -59,6 +59,8 @@ export function TextCompare(props: Props) {
   const [savedLeft, setSavedLeft] = useState(() => normalizeEol(props.leftText));
   const [savedRight, setSavedRight] = useState(() => normalizeEol(props.rightText));
   const [rows, setRows] = useState(props.rows);
+  // rows がどの本文から作られたか。本文がこれと違う間は、行番号が合わないので差分の反映（矢印）を止める
+  const [rowsText, setRowsText] = useState({ left: normalizeEol(props.leftText), right: normalizeEol(props.rightText) });
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState(-1);
@@ -162,6 +164,7 @@ export function TextCompare(props: Props) {
       const next = await diffText(l, r, mode, props.options);
       if (id !== seq.current) return; // より新しい比較が走っている
       setRows(next);
+      setRowsText({ left: l, right: r });
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -339,6 +342,11 @@ export function TextCompare(props: Props) {
   const single = props.leftPath === null || props.rightPath === null;
   const locked = props.readOnly === true; // 編集・保存・マージはできない
   const diffCount = rows.filter((r) => r.kind !== "equal").length;
+  const stale = leftText !== rowsText.left || rightText !== rowsText.right;
+  // 行単位の比較は改行コードや末尾の改行を見ないので、差分が0行でもそれだけ違うことがある（無視設定が有効なときは出さない）
+  const o = props.options;
+  const ignoring = o.ignore_whitespace || o.ignore_case || o.ignore_blank_lines || o.ignore_comments || o.ignore_line_patterns.length > 0;
+  const eolOnly = !single && !stale && diffCount === 0 && !ignoring && (eols.current.left !== eols.current.right || leftText !== rightText);
   const inCurrent = (i: number) => cursor >= 0 && blocks[cursor] && i >= blocks[cursor].start && i < blocks[cursor].end;
 
   return (
@@ -356,6 +364,7 @@ export function TextCompare(props: Props) {
             <span className="summary">
               差分 {diffCount} 行{blocks.length > 0 && cursor >= 0 ? `（${cursor + 1} / ${blocks.length} 箇所）` : ""}
             </span>
+            {eolOnly && <span className="summary">（改行コードまたは末尾の改行のみ異なります）</span>}
             <button onClick={() => void exportPatch()}>パッチを保存…</button>
             <button onClick={() => void exportReport()}>レポートを保存…</button>
             {props.onThreeWay && <button onClick={props.onThreeWay}>3ウェイ…</button>}
@@ -461,9 +470,9 @@ export function TextCompare(props: Props) {
       )}
       {/* 編集→表示→編集でも元に戻す履歴を保つため、テキストエリアは常に保持し表示だけ切り替える */}
       <div className={editing && !single ? "edit-panes" : "edit-panes offscreen"} aria-hidden={!editing || single}>
-        <NumberedTextarea ref={editors.left} label="左のテキスト" value={leftText} onChange={setLeftText} onSave={saveShortcut("left")} onScrollLine={syncFrom("left")} highlights={highlightsFor(rows, "left")} findHit={hitIn("left")} tokens={leftTokens} showWs={showWs} onFocusPane={() => setActiveSide("left")} active={findOpen && editing && activeSide === "left"} />
+        <NumberedTextarea hidden={!editing || single} ref={editors.left} label="左のテキスト" value={leftText} onChange={setLeftText} onSave={saveShortcut("left")} onScrollLine={syncFrom("left")} highlights={highlightsFor(rows, "left")} findHit={hitIn("left")} tokens={leftTokens} showWs={showWs} onFocusPane={() => setActiveSide("left")} active={findOpen && editing && activeSide === "left"} />
         <div className="mid" />
-        <NumberedTextarea ref={editors.right} label="右のテキスト" value={rightText} onChange={setRightText} onSave={saveShortcut("right")} onScrollLine={syncFrom("right")} highlights={highlightsFor(rows, "right")} findHit={hitIn("right")} tokens={rightTokens} showWs={showWs} onFocusPane={() => setActiveSide("right")} active={findOpen && editing && activeSide === "right"} />
+        <NumberedTextarea hidden={!editing || single} ref={editors.right} label="右のテキスト" value={rightText} onChange={setRightText} onSave={saveShortcut("right")} onScrollLine={syncFrom("right")} highlights={highlightsFor(rows, "right")} findHit={hitIn("right")} tokens={rightTokens} showWs={showWs} onFocusPane={() => setActiveSide("right")} active={findOpen && editing && activeSide === "right"} />
       </div>
       {(!editing || single) && (
         <table className={virtual ? "diff-table virtual" : "diff-table"} ref={table}>
@@ -485,10 +494,10 @@ export function TextCompare(props: Props) {
                   <td className="mid merge">
                     {b !== undefined && !locked && (
                       <>
-                        <button aria-label={`差分${b + 1}を左から右へ反映`} title="左の内容を右へ反映" onClick={() => merge(b, "left")}>
+                        <button aria-label={`差分${b + 1}を左から右へ反映`} title="左の内容を右へ反映" disabled={stale} onClick={() => merge(b, "left")}>
                           →
                         </button>
-                        <button aria-label={`差分${b + 1}を右から左へ反映`} title="右の内容を左へ反映" onClick={() => merge(b, "right")}>
+                        <button aria-label={`差分${b + 1}を右から左へ反映`} title="右の内容を左へ反映" disabled={stale} onClick={() => merge(b, "right")}>
                           ←
                         </button>
                       </>

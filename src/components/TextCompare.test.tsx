@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import type { DiffRow } from "../types";
 
@@ -117,6 +117,43 @@ describe("TextCompare", () => {
     await waitFor(() => expect(saveText).toHaveBeenCalledWith("/l.txt", "a\r\nX\r\n", UTF8));
     fireEvent.click(screen.getByRole("button", { name: "右を保存" }));
     await waitFor(() => expect(saveText).toHaveBeenCalledWith("/r.txt", "a\nY\n", UTF8));
+  });
+
+  it("disables the merge arrows while the diff does not match the text yet", async () => {
+    installExecCommand();
+    let resolve: (r: DiffRow[]) => void = () => {};
+    diffText.mockImplementation(() => new Promise<DiffRow[]>((r) => (resolve = r)));
+    setup();
+    const arrow = () => screen.getByRole("button", { name: "差分1を左から右へ反映" });
+    expect(arrow()).toBeEnabled();
+    fireEvent.click(arrow());
+    expect(arrow()).toBeDisabled(); // 再比較が終わるまでは古い行番号で書き換えない
+    await act(async () => resolve(rows));
+    await waitFor(() => expect(arrow()).toBeEnabled());
+  });
+
+  it("keeps the hidden editors out of the Tab order until editing starts", () => {
+    setup();
+    expect(screen.getByLabelText("左のテキスト")).toHaveAttribute("tabindex", "-1");
+    fireEvent.click(screen.getByText("編集"));
+    expect(screen.getByLabelText("左のテキスト")).not.toHaveAttribute("tabindex");
+  });
+
+  it("explains a zero-line diff caused only by line endings or the final newline", () => {
+    const mkEol = (l: string, r: string, options = OPTS) =>
+      render(<TextCompare leftText={l} rightText={r} rows={[]} mode="line" leftPath="/l.txt" rightPath="/r.txt" options={options} leftEncoding={UTF8} rightEncoding={UTF8} />);
+    const note = "（改行コードまたは末尾の改行のみ異なります）";
+    const first = mkEol("a\r\n", "a\n");
+    expect(screen.getByText(note)).toBeInTheDocument();
+    first.unmount();
+    const second = mkEol("a\n", "a");
+    expect(screen.getByText(note)).toBeInTheDocument();
+    second.unmount();
+    const third = mkEol("a\n", "a\n");
+    expect(screen.queryByText(note)).toBeNull();
+    third.unmount();
+    mkEol("a \n", "a\n", { ...OPTS, ignore_whitespace: true });
+    expect(screen.queryByText(note)).toBeNull();
   });
 
   it("saves only the edited pane and clears the dirty marker", async () => {

@@ -85,6 +85,28 @@ pub fn read_limited(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// 同じフォルダの一時ファイルへ書いてから置き換える（書き込みの途中で失敗しても、元のファイルは壊れない）。
+/// 権限は元のファイルを引き継ぎ、シンボリックリンクはリンク先のファイルを置き換える。
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let target = fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    // 置き換え方式だと読み取り専用のファイルにも書けてしまうので、先に拒否する
+    if fs::metadata(&target).map_err(|e| format!("{}: {e}", path.display()))?.permissions().readonly() {
+        return Err(format!("{}: 読み取り専用のファイルです", path.display()));
+    }
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = target.with_file_name(format!(".{name}.kurabel-tmp"));
+    let result = (|| -> std::io::Result<()> {
+        fs::write(&tmp, bytes)?;
+        fs::set_permissions(&tmp, fs::metadata(&target)?.permissions())?;
+        fs::rename(&tmp, &target)
+    })();
+    if let Err(e) = result {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("{}: {e}", path.display()));
+    }
+    Ok(())
+}
+
 /// 既存の通常ファイルへテキストを書き込む（新規作成・ディレクトリ・サイズ超過は拒否）。
 pub fn write_text(path: &Path, content: &str, encoding: &TextEncoding) -> Result<(), String> {
     if classify(path)? != PathKind::File {
@@ -94,7 +116,7 @@ pub fn write_text(path: &Path, content: &str, encoding: &TextEncoding) -> Result
     if bytes.len() as u64 > MAX_FILE_SIZE {
         return Err(format!("内容が上限 ({} MB) を超えています", MAX_FILE_SIZE / 1024 / 1024));
     }
-    fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
+    write_atomic(path, &bytes)
 }
 
 /// 片方だけ開いているとき: そのファイル/フォルダをそのまま表示するための結果を返す（反対側は空）。
@@ -102,8 +124,11 @@ pub fn view_single(path: &Path, left_side: bool, options: &DiffOptions, encoding
     if classify(path)? == PathKind::Directory {
         return Ok(Comparison::Directory { entries: dirdiff::list_dir(path, left_side, options)?, archive: false });
     }
+    // 拡張子が zip 系でも、中身が zip でなければ（読み込めなければ）通常のファイルとして表示する
     if archive::is_archive(path) {
-        return Ok(Comparison::Directory { entries: archive::list_archive(path, left_side)?, archive: true });
+        if let Ok(entries) = archive::list_archive(path, left_side) {
+            return Ok(Comparison::Directory { entries, archive: true });
+        }
     }
     let data = read_limited(path)?;
     let Some(decoded) = decode_side(&data, encoding)? else {
@@ -203,7 +228,11 @@ pub fn compare_paths(
             archive: false,
         }),
         (PathKind::File, PathKind::File) if archive::is_archive(left) && archive::is_archive(right) => {
-            Ok(Comparison::Directory { entries: archive::compare_archives(left, right)?, archive: true })
+            match archive::compare_archives(left, right) {
+                Ok(entries) => Ok(Comparison::Directory { entries, archive: true }),
+                // 拡張子が zip 系でも中身が zip でなければ、通常のファイルとして比較する
+                Err(_) => compare_files(left, right, mode, options, encodings),
+            }
         }
         (PathKind::File, PathKind::File) => compare_files(left, right, mode, options, encodings),
         _ => Err("ファイルとディレクトリは比較できません".to_string()),
@@ -362,6 +391,39 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn writes_atomically_keeping_permissions_symlinks_and_no_temp_files() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("a.txt");
+        fs::write(&f, "old").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&f, fs::Permissions::from_mode(0o640)).unwrap();
+            std::os::unix::fs::symlink(&f, d.path().join("link.txt")).unwrap();
+            write_text(&d.path().join("link.txt"), "via link", &utf8()).unwrap();
+            // リンクは残り、リンク先のファイルの内容が置き換わる
+            assert!(fs::symlink_metadata(d.path().join("link.txt")).unwrap().file_type().is_symlink());
+            assert_eq!(fs::read_to_string(&f).unwrap(), "via link");
+            assert_eq!(fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o640);
+        }
+        write_text(&f, "new", &utf8()).unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "new");
+        let names: Vec<String> = fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert!(names.iter().all(|n| !n.contains("kurabel-tmp")), "{names:?}");
+    }
+
+    #[test]
+    fn a_non_zip_with_an_archive_extension_is_compared_as_a_plain_file() {
+        let d = tempfile::tempdir().unwrap();
+        let (l, r) = (d.path().join("a.docx"), d.path().join("b.docx"));
+        fs::write(&l, "plain one\n").unwrap();
+        fs::write(&r, "plain two\n").unwrap();
+        let (o, e) = (DiffOptions::default(), EncodingChoice::default());
+        assert!(matches!(compare_paths(&l, &r, DiffMode::Line, &o, &e).unwrap(), Comparison::Text { .. }));
+        assert!(matches!(view_single(&l, true, &o, None).unwrap(), Comparison::Text { .. }));
+    }
+
+    #[test]
     fn write_error_is_reported() {
         use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
@@ -370,7 +432,7 @@ mod tests {
         fs::set_permissions(&f, fs::Permissions::from_mode(0o444)).unwrap();
         let res = write_text(&f, "new", &utf8());
         fs::set_permissions(&f, fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(res.is_err() || res.is_ok()); // root 実行時は書けてしまう
+        assert!(res.unwrap_err().contains("読み取り専用"));
     }
 
     #[test]
